@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -12,8 +13,8 @@ import (
 	"github.com/yeboahd24/cronwatch/migrations"
 )
 
-// Migrate serializes schema changes across CronWatch processes, then applies
-// pending embedded goose migrations.
+// Migrate serializes schema changes across CronWatch processes, enables WAL
+// mode, then applies pending embedded goose migrations.
 func (s *Store) Migrate(ctx context.Context) error {
 	lock, err := os.OpenFile(filepath.Join(s.DataDir, "cronwatch.migrate.lock"), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
@@ -35,6 +36,9 @@ func (s *Store) Migrate(ctx context.Context) error {
 		}
 	}
 	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+	if _, err := s.DB.ExecContext(ctx, "PRAGMA journal_mode=WAL"); err != nil {
+		return fmt.Errorf("enable WAL: %w", err)
+	}
 	provider, err := goose.NewProvider(goose.DialectSQLite3, s.DB, migrations.FS)
 	if err != nil {
 		return err

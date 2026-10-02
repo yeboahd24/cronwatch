@@ -17,6 +17,8 @@ import (
 	"github.com/yeboahd24/cronwatch/internal/storage"
 )
 
+const maxLogBytesLimit = 64 << 20
+
 type ExitError struct {
 	Code int
 	Err  error
@@ -60,7 +62,7 @@ func runCommand(ctx context.Context, args []string, stdout, stderr io.Writer) er
 	name := fs.String("name", "", "human-readable job name")
 	slug := fs.String("slug", "", "stable job slug")
 	expr := fs.String("schedule", "", "5-field cron expression")
-	grace := fs.Duration("grace", 5*time.Minute, "missed-run grace period")
+	grace := fs.Duration("grace", storage.DefaultGrace, "missed-run grace period")
 	dataDir := fs.String("data-dir", "", "data directory")
 	noEcho := fs.Bool("no-echo", false, "do not mirror child output")
 	maxLogBytes := fs.Int64("max-log-bytes", 1024*1024, "max captured bytes per stream")
@@ -90,11 +92,13 @@ func runCommand(ctx context.Context, args []string, stdout, stderr io.Writer) er
 	if *grace < 0 {
 		return errors.New("--grace must be non-negative")
 	}
-	if *maxLogBytes < 0 || *maxLogBytes > 1<<30 {
-		return errors.New("--max-log-bytes must be between 0 and 1 GiB")
+	// Logs are buffered in memory and the combined log (2x) must fit in one
+	// SQLite value, so keep the cap well below SQLite's 1 GB limit.
+	if *maxLogBytes < 0 || *maxLogBytes > maxLogBytesLimit {
+		return errors.New("--max-log-bytes must be between 0 and 64 MiB")
 	}
 	if *expr != "" {
-		if _, err := schedule.Parse(*expr); err != nil {
+		if err := schedule.Validate(*expr, time.Now()); err != nil {
 			return err
 		}
 	}
@@ -120,7 +124,21 @@ func runCommand(ctx context.Context, args []string, stdout, stderr io.Writer) er
 	for i, p := range command {
 		parts[i] = strconv.Quote(p)
 	}
-	job, err := s.UpsertJob(ctx, *slug, *name, strings.Join(parts, " "), *expr, *grace)
+	spec := storage.JobSpec{Slug: *slug, Name: *name, Command: strings.Join(parts, " ")}
+	// Only flags passed on this invocation change the stored job.
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "schedule":
+			spec.Schedule = expr
+		case "grace":
+			spec.Grace = grace
+		}
+	})
+	// Different names that slugify alike would silently share one history.
+	if existing, err := s.GetJobBySlug(ctx, spec.Slug); err == nil && existing.Name != spec.Name {
+		fmt.Fprintf(stderr, "cronwatch: warning: slug %q belongs to job %q; renaming it to %q (pass --slug to keep them separate)\n", spec.Slug, existing.Name, spec.Name)
+	}
+	job, err := s.UpsertJob(ctx, spec)
 	if err != nil {
 		return err
 	}

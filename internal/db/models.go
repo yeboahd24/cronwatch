@@ -9,14 +9,15 @@ import (
 )
 
 type Job struct {
-	ID           string
-	Slug         string
-	Name         string
-	Command      string
-	Schedule     sql.NullString
-	GraceSeconds int64
-	CreatedAt    string
-	UpdatedAt    string
+	ID                 string
+	Slug               string
+	Name               string
+	Command            string
+	Schedule           sql.NullString
+	GraceSeconds       int64
+	CreatedAt          string
+	UpdatedAt          string
+	MissedCheckedUntil sql.NullString
 }
 
 type MissedOccurrence struct {
@@ -39,4 +40,6 @@ type Run struct {
 	CombinedLog string
 	Truncated   int64
 	CreatedAt   string
+	Pid         sql.NullInt64
+	Host        sql.NullString
 }

@@ -134,7 +134,7 @@ code, pre {
 }
 
 .status-success { color: var(--success); }
-.status-failed { color: var(--danger); }
+.status-failed, .status-invalid_schedule { color: var(--danger); }
 .status-missed { color: var(--warning); }
 .status-running { color: var(--running); }
 .status-cancelled, .status-never_run { color: var(--muted); }

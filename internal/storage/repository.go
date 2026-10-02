@@ -7,6 +7,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
+	"syscall"
 	"time"
 
 	"github.com/yeboahd24/cronwatch/internal/db"
@@ -37,7 +39,17 @@ func convertJob(row db.Job) (model.Job, error) {
 		return j, err
 	}
 	j.UpdatedAt, err = parseTime(row.UpdatedAt)
-	return j, err
+	if err != nil {
+		return j, err
+	}
+	if row.MissedCheckedUntil.Valid {
+		checked, err := parseTime(row.MissedCheckedUntil.String)
+		if err != nil {
+			return j, err
+		}
+		j.MissedCheckedUntil = &checked
+	}
+	return j, nil
 }
 func convertRun(row db.Run) (model.Run, error) {
 	r := model.Run{ID: row.ID, JobID: row.JobID, Status: row.Status, Stdout: row.Stdout, Stderr: row.Stderr, CombinedLog: row.CombinedLog, Truncated: row.Truncated != 0}
@@ -68,18 +80,48 @@ func convertRun(row db.Run) (model.Run, error) {
 	return r, nil
 }
 
-func (s *Store) UpsertJob(ctx context.Context, slug, name, command, expression string, grace time.Duration) (model.Job, error) {
+// DefaultGrace is the missed-run grace period for jobs that never set one.
+const DefaultGrace = 5 * time.Minute
+
+// JobSpec describes a job registration. A nil Schedule or Grace keeps the
+// stored value, so an ad-hoc run without flags does not reset the job.
+type JobSpec struct {
+	Slug, Name, Command string
+	Schedule            *string
+	Grace               *time.Duration
+}
+
+func (s *Store) UpsertJob(ctx context.Context, spec JobSpec) (model.Job, error) {
 	id, err := newID()
 	if err != nil {
 		return model.Job{}, err
 	}
+	expression, grace := "", DefaultGrace
+	if spec.Schedule == nil || spec.Grace == nil {
+		existing, err := s.GetJobBySlug(ctx, spec.Slug)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return model.Job{}, err
+		}
+		if err == nil {
+			if existing.Schedule != nil {
+				expression = *existing.Schedule
+			}
+			grace = time.Duration(existing.GraceSeconds) * time.Second
+		}
+	}
+	if spec.Schedule != nil {
+		expression = *spec.Schedule
+	}
+	if spec.Grace != nil {
+		grace = *spec.Grace
+	}
 	now := timestamp(time.Now())
-	err = db.New(s.DB).UpsertJob(ctx, db.UpsertJobParams{ID: id, Slug: slug, Name: name, Command: command,
+	err = db.New(s.DB).UpsertJob(ctx, db.UpsertJobParams{ID: id, Slug: spec.Slug, Name: spec.Name, Command: spec.Command,
 		Schedule: sql.NullString{String: expression, Valid: expression != ""}, GraceSeconds: int64(grace / time.Second), CreatedAt: now, UpdatedAt: now})
 	if err != nil {
 		return model.Job{}, err
 	}
-	return s.GetJobBySlug(ctx, slug)
+	return s.GetJobBySlug(ctx, spec.Slug)
 }
 func (s *Store) GetJob(ctx context.Context, id string) (model.Job, error) {
 	row, err := db.New(s.DB).GetJob(ctx, id)
@@ -115,7 +157,9 @@ func (s *Store) CreateRun(ctx context.Context, jobID string, started time.Time) 
 	if err != nil {
 		return model.Run{}, err
 	}
-	err = db.New(s.DB).CreateRun(ctx, db.CreateRunParams{ID: id, JobID: jobID, StartedAt: timestamp(started), CreatedAt: timestamp(started)})
+	host, _ := os.Hostname()
+	err = db.New(s.DB).CreateRun(ctx, db.CreateRunParams{ID: id, JobID: jobID, StartedAt: timestamp(started), CreatedAt: timestamp(started),
+		Pid: sql.NullInt64{Int64: int64(os.Getpid()), Valid: true}, Host: sql.NullString{String: host, Valid: host != ""}})
 	if err != nil {
 		return model.Run{}, err
 	}
@@ -166,20 +210,66 @@ func (s *Store) ListRunsForJob(ctx context.Context, jobID string, limit int) ([]
 	}
 	return convertRuns(rows)
 }
-func (s *Store) ListRuns(ctx context.Context, limit int) ([]model.Run, error) {
-	rows, err := db.New(s.DB).ListRuns(ctx, int64(limit))
+
+// RunWithJob pairs a run with the name of its job.
+type RunWithJob struct {
+	Run     model.Run
+	JobName string
+}
+
+func (s *Store) ListRunsWithJob(ctx context.Context, limit int) ([]RunWithJob, error) {
+	rows, err := db.New(s.DB).ListRunsWithJob(ctx, int64(limit))
 	if err != nil {
 		return nil, err
 	}
-	return convertRuns(rows)
-}
-func (s *Store) RecordMissedOccurrence(ctx context.Context, jobID string, expected time.Time) error {
-	id, err := newID()
-	if err != nil {
-		return err
+	out := make([]RunWithJob, 0, len(rows))
+	for _, row := range rows {
+		r, e := convertRun(row.Run)
+		if e != nil {
+			return nil, e
+		}
+		out = append(out, RunWithJob{Run: r, JobName: row.JobName})
 	}
-	return db.New(s.DB).RecordMissedOccurrence(ctx, db.RecordMissedOccurrenceParams{ID: id, JobID: jobID, ExpectedAt: timestamp(expected), DetectedAt: timestamp(time.Now())})
+	return out, nil
 }
+
+// processGone reports whether pid definitely no longer exists. EPERM means the
+// process exists under another user, so it is treated as alive.
+func processGone(pid int64) bool {
+	return errors.Is(syscall.Kill(int(pid), 0), syscall.ESRCH)
+}
+
+// ReapAbandonedRuns marks running runs as failed when the cronwatch process
+// that owns them died on this host without recording a result (SIGKILL, OOM,
+// reboot). Runs from other hosts or without an owner PID are left alone.
+func (s *Store) ReapAbandonedRuns(ctx context.Context) (int, error) {
+	rows, err := db.New(s.DB).ListRunningRuns(ctx)
+	if err != nil {
+		return 0, err
+	}
+	host, _ := os.Hostname()
+	reaped := 0
+	for _, row := range rows {
+		if !row.Pid.Valid || !row.Host.Valid || row.Host.String != host || !processGone(row.Pid.Int64) {
+			continue
+		}
+		started, err := parseTime(row.StartedAt)
+		if err != nil {
+			return reaped, err
+		}
+		ended := time.Now()
+		note := fmt.Sprintf("\ncronwatch: run abandoned; owner process %d exited without recording a result\n", row.Pid.Int64)
+		err = s.FinishRun(ctx, row.ID, ended, ended.Sub(started), "failed", nil,
+			row.Stdout, row.Stderr+note, row.CombinedLog+note, row.Truncated != 0)
+		if err != nil {
+			// The owner may have finished the run concurrently.
+			continue
+		}
+		reaped++
+	}
+	return reaped, nil
+}
+
 func (s *Store) LatestMissedOccurrence(ctx context.Context, jobID string) (*time.Time, error) {
 	value, err := db.New(s.DB).LatestMissedOccurrence(ctx, jobID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -205,26 +295,27 @@ func (s *Store) JobView(ctx context.Context, j model.Job, now time.Time) (model.
 	if j.Schedule == nil {
 		return v, nil
 	}
-	localNow := now.In(time.Local)
-	next, err := schedule.Next(*j.Schedule, localNow)
+	// A bad stored schedule is reported on this job instead of failing every view.
+	sched, err := schedule.Parse(*j.Schedule)
 	if err != nil {
-		return v, err
+		v.Status = "invalid_schedule"
+		return v, nil
+	}
+	next := sched.Next(now.In(time.Local))
+	if next.IsZero() {
+		v.Status = "invalid_schedule"
+		return v, nil
 	}
 	v.NextExpectedAt = &next
-	previous, err := schedule.Previous(*j.Schedule, localNow.Add(time.Nanosecond))
+	// Missed occurrences are recorded by DetectMissed; a run started at or
+	// after the latest one clears the missed state.
+	missed, err := s.LatestMissedOccurrence(ctx, j.ID)
 	if err != nil {
 		return v, err
 	}
-	if !previous.After(j.CreatedAt) || now.Before(previous.Add(time.Duration(j.GraceSeconds)*time.Second)) || v.Status == "running" {
-		return v, nil
+	if missed != nil && (v.LastRun == nil || v.LastRun.StartedAt.Before(*missed)) {
+		v.Status = "missed"
 	}
-	if v.LastRun != nil && !v.LastRun.StartedAt.Before(previous) {
-		return v, nil
-	}
-	if err := s.RecordMissedOccurrence(ctx, j.ID, previous); err != nil {
-		return v, err
-	}
-	v.Status = "missed"
 	return v, nil
 }
 func (s *Store) ListJobViews(ctx context.Context, now time.Time) ([]model.JobView, error) {

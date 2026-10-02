@@ -2,6 +2,6 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Runs · CronWatch</title><link rel="stylesheet" href="/static/app.css"></head>
 <body><main class="shell"><header class="topbar"><div><h1>CronWatch</h1><p>Recent command runs</p></div><span class="local-badge">LOCAL</span></header>
 <nav class="tabs"><a href="/">Jobs</a><a class="active" href="/runs">Runs</a></nav><section class="panel table-wrap"><table><thead><tr><th>Job</th><th>Started</th><th>Status</th><th>Duration</th></tr></thead><tbody>
-{{range .Items}}<tr><td data-label="Job"><a href="/jobs/{{.Job.ID}}">{{.Job.Name}}</a></td><td data-label="Started"><a href="/runs/{{.Run.ID}}">{{time .Run.StartedAt}}</a></td><td data-label="Status"><span class="status status-{{.Run.Status}}">{{.Run.Status}}</span></td><td data-label="Duration">{{duration .Run.DurationMS}}</td></tr>
+{{range .Items}}<tr><td data-label="Job"><a href="/jobs/{{.Run.JobID}}">{{.JobName}}</a></td><td data-label="Started"><a href="/runs/{{.Run.ID}}">{{time .Run.StartedAt}}</a></td><td data-label="Status"><span class="status status-{{.Run.Status}}">{{.Run.Status}}</span></td><td data-label="Duration">{{duration .Run.DurationMS}}</td></tr>
 {{else}}<tr><td colspan="4" class="empty">No runs recorded.</td></tr>{{end}}
 </tbody></table></section></main></body></html>{{end}}

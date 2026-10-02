@@ -26,6 +26,8 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return jobsCommand(ctx, args[1:], stdout)
 	case "runs":
 		return runsCommand(ctx, args[1:], stdout)
+	case "prune":
+		return pruneCommand(ctx, args[1:], stdout)
 	case "help", "-h", "--help":
 		printHelp(stdout)
 		return nil
@@ -42,5 +44,6 @@ Usage:
   cronwatch serve [flags]
   cronwatch jobs
   cronwatch runs [job]
+  cronwatch prune [--keep N] [--older-than DURATION]
   cronwatch version`)
 }

@@ -99,3 +99,72 @@ func TestConcurrentRuns(t *testing.T) {
 		t.Fatalf("got %d runs", len(runs))
 	}
 }
+
+func TestRunRejectsImpossibleScheduleAndHugeLogs(t *testing.T) {
+	for _, args := range [][]string{
+		{"run", "--name", "x", "--schedule", "0 0 30 2 *", "--data-dir", t.TempDir(), "--", "true"},
+		{"run", "--name", "x", "--max-log-bytes", "1073741824", "--data-dir", t.TempDir(), "--", "true"},
+	} {
+		if err := Run(context.Background(), args, &bytes.Buffer{}, &bytes.Buffer{}); err == nil {
+			t.Fatalf("%v: expected error", args)
+		}
+	}
+}
+
+func TestRunWithoutScheduleKeepsStoredSchedule(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+	for _, args := range [][]string{
+		{"run", "--name", "nightly", "--schedule", "0 2 * * *", "--grace", "10m", "--data-dir", dir, "--", "true"},
+		{"run", "--name", "nightly", "--data-dir", dir, "--", "true"},
+	} {
+		if err := Run(ctx, args, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s, err := storage.Open(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	job, err := s.GetJobBySlug(ctx, "nightly")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Schedule == nil || *job.Schedule != "0 2 * * *" || job.GraceSeconds != 600 {
+		t.Fatalf("job = %+v", job)
+	}
+}
+
+func TestSlugCollisionWarns(t *testing.T) {
+	dir := t.TempDir()
+	var first, second bytes.Buffer
+	if err := Run(context.Background(), []string{"run", "--name", "Back up", "--data-dir", dir, "--", "true"}, &bytes.Buffer{}, &first); err != nil {
+		t.Fatal(err)
+	}
+	if err := Run(context.Background(), []string{"run", "--name", "back-up", "--data-dir", dir, "--", "true"}, &bytes.Buffer{}, &second); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(first.String(), "warning") || !strings.Contains(second.String(), `slug "back-up" belongs to job "Back up"`) {
+		t.Fatalf("stderr = %q / %q", first.String(), second.String())
+	}
+}
+
+func TestPruneCommand(t *testing.T) {
+	dir := t.TempDir()
+	for range 3 {
+		if err := Run(context.Background(), []string{"run", "--name", "p", "--data-dir", dir, "--", "true"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := Run(context.Background(), []string{"prune", "--data-dir", dir}, &bytes.Buffer{}, &bytes.Buffer{}); err == nil {
+		t.Fatal("prune without limits should fail")
+	}
+	var out bytes.Buffer
+	if err := Run(context.Background(), []string{"prune", "--keep", "1", "--data-dir", dir}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "Deleted 2 runs") {
+		t.Fatalf("out = %q", out.String())
+	}
+}

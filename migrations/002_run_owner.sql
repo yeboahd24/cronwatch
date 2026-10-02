@@ -1,0 +1,7 @@
+-- +goose Up
+ALTER TABLE runs ADD COLUMN pid INTEGER;
+ALTER TABLE runs ADD COLUMN host TEXT;
+
+-- +goose Down
+ALTER TABLE runs DROP COLUMN host;
+ALTER TABLE runs DROP COLUMN pid;

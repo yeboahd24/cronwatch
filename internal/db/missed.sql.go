@@ -9,6 +9,18 @@ import (
 	"context"
 )
 
+const deleteMissedBefore = `-- name: DeleteMissedBefore :execrows
+DELETE FROM missed_occurrences WHERE expected_at < ?
+`
+
+func (q *Queries) DeleteMissedBefore(ctx context.Context, expectedAt string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteMissedBefore, expectedAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const latestMissedOccurrence = `-- name: LatestMissedOccurrence :one
 SELECT expected_at FROM missed_occurrences WHERE job_id = ? ORDER BY expected_at DESC LIMIT 1
 `

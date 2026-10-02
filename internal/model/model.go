@@ -11,6 +11,9 @@ type Job struct {
 	GraceSeconds int64
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
+	// MissedCheckedUntil is the missed-run detection watermark; nil means
+	// detection starts from CreatedAt.
+	MissedCheckedUntil *time.Time
 }
 
 type Run struct {

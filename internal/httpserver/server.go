@@ -39,7 +39,14 @@ func duration(ms *int64) string {
 	return (time.Duration(*ms) * time.Millisecond).String()
 }
 
-func New(store *storage.Store) (*Server, error) {
+// Options configures the web server.
+type Options struct {
+	// AnyHost disables the loopback Host-header check, for --public servers
+	// reached through a real hostname.
+	AnyHost bool
+}
+
+func New(store *storage.Store, opts Options) (*Server, error) {
 	t, err := template.New("").Funcs(template.FuncMap{"time": formatTime, "maybeTime": maybeTime, "duration": duration}).ParseFS(assets, "templates/*.html")
 	if err != nil {
 		return nil, err
@@ -50,6 +57,9 @@ func New(store *storage.Store) (*Server, error) {
 	}
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer, securityHeaders)
+	if !opts.AnyHost {
+		r.Use(loopbackHostOnly)
+	}
 	s := &Server{Router: r, Templates: t, Store: store}
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -78,7 +88,7 @@ func queryError(w http.ResponseWriter, err error) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	http.Error(w, "database error", http.StatusInternalServerError)
+	http.Error(w, "internal error", http.StatusInternalServerError)
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -135,23 +145,10 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 	}{run, job})
 }
 func (s *Server) handleRuns(w http.ResponseWriter, r *http.Request) {
-	runs, err := s.Store.ListRuns(r.Context(), 100)
+	items, err := s.Store.ListRunsWithJob(r.Context(), 100)
 	if err != nil {
 		queryError(w, err)
 		return
 	}
-	type item struct {
-		Run model.Run
-		Job model.Job
-	}
-	items := make([]item, 0, len(runs))
-	for _, run := range runs {
-		job, e := s.Store.GetJob(r.Context(), run.JobID)
-		if e != nil {
-			queryError(w, e)
-			return
-		}
-		items = append(items, item{run, job})
-	}
-	s.render(w, "runs.html", struct{ Items []item }{items})
+	s.render(w, "runs.html", struct{ Items []storage.RunWithJob }{items})
 }

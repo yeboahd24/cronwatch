@@ -11,7 +11,7 @@ import (
 )
 
 const getJob = `-- name: GetJob :one
-SELECT id, slug, name, command, schedule, grace_seconds, created_at, updated_at FROM jobs WHERE id = ?
+SELECT id, slug, name, command, schedule, grace_seconds, created_at, updated_at, missed_checked_until FROM jobs WHERE id = ?
 `
 
 func (q *Queries) GetJob(ctx context.Context, id string) (Job, error) {
@@ -26,12 +26,13 @@ func (q *Queries) GetJob(ctx context.Context, id string) (Job, error) {
 		&i.GraceSeconds,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.MissedCheckedUntil,
 	)
 	return i, err
 }
 
 const getJobBySlug = `-- name: GetJobBySlug :one
-SELECT id, slug, name, command, schedule, grace_seconds, created_at, updated_at FROM jobs WHERE slug = ?
+SELECT id, slug, name, command, schedule, grace_seconds, created_at, updated_at, missed_checked_until FROM jobs WHERE slug = ?
 `
 
 func (q *Queries) GetJobBySlug(ctx context.Context, slug string) (Job, error) {
@@ -46,12 +47,13 @@ func (q *Queries) GetJobBySlug(ctx context.Context, slug string) (Job, error) {
 		&i.GraceSeconds,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.MissedCheckedUntil,
 	)
 	return i, err
 }
 
 const listJobs = `-- name: ListJobs :many
-SELECT id, slug, name, command, schedule, grace_seconds, created_at, updated_at FROM jobs ORDER BY name COLLATE NOCASE
+SELECT id, slug, name, command, schedule, grace_seconds, created_at, updated_at, missed_checked_until FROM jobs ORDER BY name COLLATE NOCASE
 `
 
 func (q *Queries) ListJobs(ctx context.Context) ([]Job, error) {
@@ -72,6 +74,7 @@ func (q *Queries) ListJobs(ctx context.Context) ([]Job, error) {
 			&i.GraceSeconds,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.MissedCheckedUntil,
 		); err != nil {
 			return nil, err
 		}
@@ -86,6 +89,20 @@ func (q *Queries) ListJobs(ctx context.Context) ([]Job, error) {
 	return items, nil
 }
 
+const setMissedCheckedUntil = `-- name: SetMissedCheckedUntil :exec
+UPDATE jobs SET missed_checked_until = ? WHERE id = ?
+`
+
+type SetMissedCheckedUntilParams struct {
+	MissedCheckedUntil sql.NullString
+	ID                 string
+}
+
+func (q *Queries) SetMissedCheckedUntil(ctx context.Context, arg SetMissedCheckedUntilParams) error {
+	_, err := q.db.ExecContext(ctx, setMissedCheckedUntil, arg.MissedCheckedUntil, arg.ID)
+	return err
+}
+
 const upsertJob = `-- name: UpsertJob :exec
 INSERT INTO jobs (id, slug, name, command, schedule, grace_seconds, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -94,7 +111,10 @@ ON CONFLICT(slug) DO UPDATE SET
     command = excluded.command,
     schedule = excluded.schedule,
     grace_seconds = excluded.grace_seconds,
-    updated_at = excluded.updated_at
+    updated_at = excluded.updated_at,
+    -- A new schedule must not be judged against occurrences before it existed.
+    missed_checked_until = CASE WHEN jobs.schedule IS excluded.schedule
+        THEN jobs.missed_checked_until ELSE excluded.updated_at END
 `
 
 type UpsertJobParams struct {

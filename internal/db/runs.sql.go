@@ -11,8 +11,8 @@ import (
 )
 
 const createRun = `-- name: CreateRun :exec
-INSERT INTO runs (id, job_id, started_at, status, created_at)
-VALUES (?, ?, ?, 'running', ?)
+INSERT INTO runs (id, job_id, started_at, status, created_at, pid, host)
+VALUES (?, ?, ?, 'running', ?, ?, ?)
 `
 
 type CreateRunParams struct {
@@ -20,6 +20,8 @@ type CreateRunParams struct {
 	JobID     string
 	StartedAt string
 	CreatedAt string
+	Pid       sql.NullInt64
+	Host      sql.NullString
 }
 
 func (q *Queries) CreateRun(ctx context.Context, arg CreateRunParams) error {
@@ -28,8 +30,39 @@ func (q *Queries) CreateRun(ctx context.Context, arg CreateRunParams) error {
 		arg.JobID,
 		arg.StartedAt,
 		arg.CreatedAt,
+		arg.Pid,
+		arg.Host,
 	)
 	return err
+}
+
+const deleteRunsBefore = `-- name: DeleteRunsBefore :execrows
+DELETE FROM runs WHERE status != 'running' AND started_at < ?
+`
+
+func (q *Queries) DeleteRunsBefore(ctx context.Context, startedAt string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteRunsBefore, startedAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const deleteRunsBeyondKeep = `-- name: DeleteRunsBeyondKeep :execrows
+DELETE FROM runs WHERE status != 'running' AND started_at < COALESCE((
+    SELECT kept.started_at FROM runs AS kept
+    WHERE kept.job_id = runs.job_id
+    ORDER BY kept.started_at DESC LIMIT 1 OFFSET ?
+), '')
+`
+
+// The parameter is keep-1: the offset of the oldest run to keep for each job.
+func (q *Queries) DeleteRunsBeyondKeep(ctx context.Context, offset int64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteRunsBeyondKeep, offset)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const finishRun = `-- name: FinishRun :execrows
@@ -69,7 +102,7 @@ func (q *Queries) FinishRun(ctx context.Context, arg FinishRunParams) (int64, er
 }
 
 const getRun = `-- name: GetRun :one
-SELECT id, job_id, started_at, ended_at, duration_ms, status, exit_code, stdout, stderr, combined_log, truncated, created_at FROM runs WHERE id = ?
+SELECT id, job_id, started_at, ended_at, duration_ms, status, exit_code, stdout, stderr, combined_log, truncated, created_at, pid, host FROM runs WHERE id = ?
 `
 
 func (q *Queries) GetRun(ctx context.Context, id string) (Run, error) {
@@ -88,16 +121,50 @@ func (q *Queries) GetRun(ctx context.Context, id string) (Run, error) {
 		&i.CombinedLog,
 		&i.Truncated,
 		&i.CreatedAt,
+		&i.Pid,
+		&i.Host,
 	)
 	return i, err
 }
 
-const listRuns = `-- name: ListRuns :many
-SELECT id, job_id, started_at, ended_at, duration_ms, status, exit_code, stdout, stderr, combined_log, truncated, created_at FROM runs ORDER BY started_at DESC LIMIT ?
+const listRunStartsSince = `-- name: ListRunStartsSince :many
+SELECT started_at FROM runs WHERE job_id = ? AND started_at >= ? ORDER BY started_at
 `
 
-func (q *Queries) ListRuns(ctx context.Context, limit int64) ([]Run, error) {
-	rows, err := q.db.QueryContext(ctx, listRuns, limit)
+type ListRunStartsSinceParams struct {
+	JobID     string
+	StartedAt string
+}
+
+func (q *Queries) ListRunStartsSince(ctx context.Context, arg ListRunStartsSinceParams) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listRunStartsSince, arg.JobID, arg.StartedAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var started_at string
+		if err := rows.Scan(&started_at); err != nil {
+			return nil, err
+		}
+		items = append(items, started_at)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRunningRuns = `-- name: ListRunningRuns :many
+SELECT id, job_id, started_at, ended_at, duration_ms, status, exit_code, stdout, stderr, combined_log, truncated, created_at, pid, host FROM runs WHERE status = 'running'
+`
+
+func (q *Queries) ListRunningRuns(ctx context.Context) ([]Run, error) {
+	rows, err := q.db.QueryContext(ctx, listRunningRuns)
 	if err != nil {
 		return nil, err
 	}
@@ -118,6 +185,8 @@ func (q *Queries) ListRuns(ctx context.Context, limit int64) ([]Run, error) {
 			&i.CombinedLog,
 			&i.Truncated,
 			&i.CreatedAt,
+			&i.Pid,
+			&i.Host,
 		); err != nil {
 			return nil, err
 		}
@@ -133,7 +202,7 @@ func (q *Queries) ListRuns(ctx context.Context, limit int64) ([]Run, error) {
 }
 
 const listRunsForJob = `-- name: ListRunsForJob :many
-SELECT id, job_id, started_at, ended_at, duration_ms, status, exit_code, stdout, stderr, combined_log, truncated, created_at FROM runs WHERE job_id = ? ORDER BY started_at DESC LIMIT ?
+SELECT id, job_id, started_at, ended_at, duration_ms, status, exit_code, stdout, stderr, combined_log, truncated, created_at, pid, host FROM runs WHERE job_id = ? ORDER BY started_at DESC LIMIT ?
 `
 
 type ListRunsForJobParams struct {
@@ -163,6 +232,58 @@ func (q *Queries) ListRunsForJob(ctx context.Context, arg ListRunsForJobParams) 
 			&i.CombinedLog,
 			&i.Truncated,
 			&i.CreatedAt,
+			&i.Pid,
+			&i.Host,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRunsWithJob = `-- name: ListRunsWithJob :many
+SELECT runs.id, runs.job_id, runs.started_at, runs.ended_at, runs.duration_ms, runs.status, runs.exit_code, runs.stdout, runs.stderr, runs.combined_log, runs.truncated, runs.created_at, runs.pid, runs.host, jobs.name AS job_name
+FROM runs JOIN jobs ON jobs.id = runs.job_id
+ORDER BY runs.started_at DESC LIMIT ?
+`
+
+type ListRunsWithJobRow struct {
+	Run     Run
+	JobName string
+}
+
+func (q *Queries) ListRunsWithJob(ctx context.Context, limit int64) ([]ListRunsWithJobRow, error) {
+	rows, err := q.db.QueryContext(ctx, listRunsWithJob, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRunsWithJobRow
+	for rows.Next() {
+		var i ListRunsWithJobRow
+		if err := rows.Scan(
+			&i.Run.ID,
+			&i.Run.JobID,
+			&i.Run.StartedAt,
+			&i.Run.EndedAt,
+			&i.Run.DurationMs,
+			&i.Run.Status,
+			&i.Run.ExitCode,
+			&i.Run.Stdout,
+			&i.Run.Stderr,
+			&i.Run.CombinedLog,
+			&i.Run.Truncated,
+			&i.Run.CreatedAt,
+			&i.Run.Pid,
+			&i.Run.Host,
+			&i.JobName,
 		); err != nil {
 			return nil, err
 		}

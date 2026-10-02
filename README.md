@@ -78,23 +78,57 @@ database. A user-level systemd service example is in
 | `cronwatch serve [--addr 127.0.0.1:8765]` | Serve the local dashboard |
 | `cronwatch jobs` | List jobs and current status |
 | `cronwatch runs [job-slug]` | List recent runs |
+| `cronwatch prune [--keep N] [--older-than DURATION]` | Delete old finished runs |
 | `cronwatch version` | Print the version |
 
-`run`, `serve`, `jobs`, and `runs` accept `--data-dir`. The
+All commands except `version` accept `--data-dir`, and flags go before any
+job slug. The
 `CRONWATCH_DATA_DIR` environment variable sets the default directory. Run
 `cronwatch run --help` for capture and schedule flags.
 
-Logs are capped at 1 MiB per stream by default. `--max-log-bytes` changes that
-limit, and `--no-echo` keeps child output off the terminal while still storing
-it. Treat stored logs as sensitive: command output may contain secrets.
+Logs are capped at 1 MiB per stream by default (maximum 64 MiB). When output
+exceeds the cap, CronWatch keeps the first and last half and replaces the
+middle with a marker, so the error at the end of a failing job is kept.
+`--max-log-bytes` changes the limit, and `--no-echo` keeps child output off the
+terminal while still storing it. Treat stored logs as sensitive: command output
+may contain secrets.
+
+`run` only changes a job's schedule or grace period when you pass `--schedule`
+or `--grace`, so a manual test run does not reset them. Different names that
+produce the same slug share one job; CronWatch prints a warning when that
+happens, and `--slug` keeps them apart.
+
+### Retention
+
+CronWatch does not delete runs on its own. Schedule `prune` to bound the
+database, for example keeping the latest 200 runs per job and nothing older
+than 30 days:
+
+```cron
+30 3 * * * $HOME/.local/bin/cronwatch prune --keep 200 --older-than 720h
+```
+
+Running runs are never pruned. `--older-than` also removes old missed-run
+records.
 
 ## How missed runs work
 
 CronWatch compares the configured schedule with recorded run start times. Once
-an expected start passes its grace period, the dashboard shows **missed** if
-no run started in that schedule window. Missed occurrences are tracked
-separately from command executions, so a command that never started is not
-reported as a failed process. Schedules follow the server's local time zone.
+an expected start passes its grace period, it is recorded as missed if no run
+started between it and the next expected start. Every missed occurrence is
+recorded, not just the latest. A job shows **missed** until a run starts.
+Missed occurrences are tracked separately from command executions, so a
+command that never started is not reported as a failed process. Schedules
+follow the server's local time zone.
+
+Detection runs every minute while `cronwatch serve` is running, and each time
+`cronwatch jobs`, `runs`, or `prune` is invoked. Changing a job's schedule
+starts detection from that moment. A cron expression that can never fire (such
+as `0 0 30 2 *`) is rejected by `run`, and shows as `invalid_schedule`.
+
+If a `cronwatch run` process is killed before it can record a result, the run
+is marked `failed` with a note in its log once CronWatch sees the process is
+gone.
 
 ## Development
 

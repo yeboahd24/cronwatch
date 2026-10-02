@@ -13,7 +13,7 @@ func TestMissedScheduleAndLateRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	job, err := s.UpsertJob(ctx, "nightly", "Nightly", "true", "0 2 * * *", 10*time.Minute)
+	job, err := s.UpsertJob(ctx, testSpec("nightly", "0 2 * * *", 10*time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,12 +26,18 @@ func TestMissedScheduleAndLateRun(t *testing.T) {
 	if !next.After(now) {
 		next = next.Add(24 * time.Hour)
 	}
+	if _, err := s.DetectMissed(ctx, next.Add(11*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
 	view, err := s.JobView(ctx, job, next.Add(11*time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if view.Status != "missed" {
 		t.Fatalf("status = %s", view.Status)
+	}
+	if _, err := s.DetectMissed(ctx, next.Add(12*time.Minute)); err != nil {
+		t.Fatal(err)
 	}
 	view, err = s.JobView(ctx, job, next.Add(12*time.Minute))
 	if err != nil {
@@ -71,7 +77,7 @@ func TestRunsSortWithinSameSecond(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	job, err := s.UpsertJob(ctx, "order", "Order", "true", "", 0)
+	job, err := s.UpsertJob(ctx, testSpec("order", "", 0))
 	if err != nil {
 		t.Fatal(err)
 	}

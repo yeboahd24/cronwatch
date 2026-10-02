@@ -3,3 +3,6 @@
 
 # Daily report at 06:00
 0 6 * * * $HOME/.local/bin/cronwatch run --name "Generate Reports" --schedule "0 6 * * *" -- /opt/apps/generate-report
+
+# Keep the database bounded: latest 200 runs per job, nothing older than 30 days
+30 3 * * * $HOME/.local/bin/cronwatch prune --keep 200 --older-than 720h

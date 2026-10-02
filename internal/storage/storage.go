@@ -3,7 +3,9 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -17,15 +19,24 @@ type Store struct {
 }
 
 func Open(ctx context.Context, dataDir string) (*Store, error) {
-	if err := os.MkdirAll(dataDir, 0o700); err != nil {
-		return nil, err
-	}
-	if err := os.Chmod(dataDir, 0o700); err != nil {
+	// Only tighten permissions on a directory CronWatch creates; an existing
+	// directory may be shared and is the user's to manage.
+	if _, err := os.Stat(dataDir); errors.Is(err, fs.ErrNotExist) {
+		if err := os.MkdirAll(dataDir, 0o700); err != nil {
+			return nil, err
+		}
+		if err := os.Chmod(dataDir, 0o700); err != nil {
+			return nil, err
+		}
+	} else if err != nil {
 		return nil, err
 	}
 
 	path := filepath.Join(dataDir, "cronwatch.db")
-	dsn := (&url.URL{Scheme: "file", Path: path, RawQuery: "_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)"}).String()
+	// WAL mode is persistent in the database file, so Migrate enables it once
+	// under the migration lock. Requesting it on every connection races when
+	// several processes open a new database and fails with SQLITE_BUSY.
+	dsn := (&url.URL{Scheme: "file", Path: path, RawQuery: "_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"}).String()
 
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {

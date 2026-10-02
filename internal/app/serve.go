@@ -57,7 +57,7 @@ func serveCommand(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		return err
 	}
 	defer s.Close()
-	web, err := httpserver.New(s)
+	web, err := httpserver.New(s, httpserver.Options{AnyHost: *public})
 	if err != nil {
 		return err
 	}
@@ -68,6 +68,7 @@ func serveCommand(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	server := &http.Server{Handler: web.Router, ReadHeaderTimeout: 5 * time.Second}
 	fmt.Fprintf(stdout, "CronWatch UI: http://%s\n", listener.Addr())
 	done := make(chan struct{})
+	go maintenanceLoop(ctx, done, s, stderr)
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -83,4 +84,36 @@ func serveCommand(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		return nil
 	}
 	return err
+}
+
+// maintenanceLoop periodically closes out runs whose cronwatch process died
+// and records missed occurrences, so missed runs are detected even when nobody
+// is looking at the UI.
+func maintenanceLoop(ctx context.Context, done <-chan struct{}, s *storage.Store, stderr io.Writer) {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		if err := maintain(ctx, s); err != nil && ctx.Err() == nil {
+			fmt.Fprintln(stderr, "maintenance:", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-done:
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+// maintain reaps abandoned runs, then records missed occurrences. Reaping
+// first means a dead run's status is settled before missed runs are judged.
+func maintain(ctx context.Context, s *storage.Store) error {
+	if _, err := s.ReapAbandonedRuns(ctx); err != nil {
+		return fmt.Errorf("reap abandoned runs: %w", err)
+	}
+	if _, err := s.DetectMissed(ctx, time.Now()); err != nil {
+		return fmt.Errorf("detect missed runs: %w", err)
+	}
+	return nil
 }
