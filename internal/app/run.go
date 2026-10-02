@@ -67,29 +67,30 @@ type runOptions struct {
 
 // parseRunArgs parses "cronwatch run" arguments. It is shared with crontab
 // sync so both derive the same job from the same arguments.
-func parseRunArgs(args []string, flagOutput io.Writer) (runOptions, error) {
+// help receives --help output.
+func parseRunArgs(args []string, help io.Writer) (runOptions, error) {
 	var opts runOptions
-	fs := flag.NewFlagSet("run", flag.ContinueOnError)
-	fs.SetOutput(flagOutput)
-	name := fs.String("name", "", "human-readable job name")
-	slug := fs.String("slug", "", "stable job slug")
-	expr := fs.String("schedule", "", "5-field cron expression")
-	grace := fs.Duration("grace", storage.DefaultGrace, "missed-run grace period")
+	fs := newFlagSet("run", "cronwatch run --name NAME [flags] -- command [args...]",
+		"Run a command, pass its output through, and record the result. Exits with the command's exit code.")
+	name := fs.String("name", "", "job `name` shown on the dashboard (required)")
+	slug := fs.String("slug", "", "stable job `id` (default: the name in lowercase with dashes)")
+	expr := fs.String("schedule", "", "five-field cron `expression` CronWatch should expect the job on")
+	grace := fs.Duration("grace", storage.DefaultGrace, "how late a run may start before it counts as missed")
 	dataDir := fs.String("data-dir", "", "data directory")
-	noEcho := fs.Bool("no-echo", false, "do not mirror child output")
-	maxLogBytes := fs.Int64("max-log-bytes", 1024*1024, "max captured bytes per stream")
-	sep := -1
+	noEcho := fs.Bool("no-echo", false, "record output without also printing it")
+	maxLogBytes := fs.Int64("max-log-bytes", 1024*1024, "output `bytes` kept per stream (max 64 MiB)")
+	sep := len(args)
 	for i, arg := range args {
 		if arg == "--" {
 			sep = i
 			break
 		}
 	}
-	if sep < 0 {
-		return opts, errors.New("run requires -- command [args...]")
-	}
-	if err := fs.Parse(args[:sep]); err != nil {
+	if err := parseFlags(fs, args[:sep], help); err != nil {
 		return opts, err
+	}
+	if sep == len(args) {
+		return opts, errors.New("run requires -- command [args...]")
 	}
 	if fs.NArg() != 0 {
 		return opts, errors.New("unexpected arguments before --")
@@ -144,7 +145,7 @@ func parseRunArgs(args []string, flagOutput io.Writer) (runOptions, error) {
 }
 
 func runCommand(ctx context.Context, args []string, stdout, stderr io.Writer) error {
-	opts, err := parseRunArgs(args, stderr)
+	opts, err := parseRunArgs(args, stdout)
 	if err != nil {
 		return err
 	}

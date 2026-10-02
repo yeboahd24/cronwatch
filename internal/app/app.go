@@ -2,13 +2,57 @@ package app
 
 import (
 	"context"
+	"errors"
+	"flag"
 	"fmt"
 	"io"
+	"strings"
 )
 
 var Version = "0.1.0-dev"
 
+// errHelpShown is returned once a command has printed its --help text; Run
+// reports it as success.
+var errHelpShown = errors.New("help shown")
+
+// newFlagSet returns a flag set whose --help prints synopsis, about and the
+// flags. Parse errors are returned, not printed, so they appear once.
+func newFlagSet(name, synopsis, about string) *flag.FlagSet {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.Usage = func() {
+		w := fs.Output()
+		fmt.Fprintf(w, "Usage: %s\n\n%s\n", synopsis, about)
+		hasFlags := false
+		fs.VisitAll(func(*flag.Flag) { hasFlags = true })
+		if hasFlags {
+			fmt.Fprintln(w, "\nFlags:")
+			fs.PrintDefaults()
+		}
+	}
+	return fs
+}
+
+// parseFlags parses args, printing help to stdout for -h/--help.
+func parseFlags(fs *flag.FlagSet, args []string, stdout io.Writer) error {
+	err := fs.Parse(args)
+	if errors.Is(err, flag.ErrHelp) {
+		fs.SetOutput(stdout)
+		fs.Usage()
+		return errHelpShown
+	}
+	return err
+}
+
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	err := dispatch(ctx, args, stdout, stderr)
+	if errors.Is(err, errHelpShown) {
+		return nil
+	}
+	return err
+}
+
+func dispatch(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		printHelp(stdout)
 		return nil
@@ -31,6 +75,10 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	case "sync":
 		return syncCommand(ctx, args[1:], stdout)
 	case "help", "-h", "--help":
+		// "cronwatch help run" shows the help for one command.
+		if len(args) > 1 && args[1] != "help" && !strings.HasPrefix(args[1], "-") {
+			return dispatch(ctx, []string{args[1], "--help"}, stdout, stderr)
+		}
 		printHelp(stdout)
 		return nil
 	default:
@@ -48,5 +96,7 @@ Usage:
   cronwatch runs [job]
   cronwatch prune [--keep N] [--older-than DURATION]
   cronwatch sync [--crontab FILE]
-  cronwatch version`)
+  cronwatch version
+
+Run "cronwatch COMMAND --help" for a command's flags.`)
 }

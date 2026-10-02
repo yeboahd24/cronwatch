@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"text/tabwriter"
@@ -33,10 +32,9 @@ func openForList(ctx context.Context, dir string) (*storage.Store, error) {
 }
 
 func jobsCommand(ctx context.Context, args []string, stdout io.Writer) error {
-	fs := flag.NewFlagSet("jobs", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs := newFlagSet("jobs", "cronwatch jobs [flags]", "List every job with its current status.")
 	dir := fs.String("data-dir", "", "data directory")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args, stdout); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
@@ -67,10 +65,9 @@ func jobsCommand(ctx context.Context, args []string, stdout io.Writer) error {
 }
 
 func runsCommand(ctx context.Context, args []string, stdout io.Writer) error {
-	fs := flag.NewFlagSet("runs", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs := newFlagSet("runs", "cronwatch runs [flags] [job-slug]", "List the 100 most recent runs, optionally for one job.")
 	dir := fs.String("data-dir", "", "data directory")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args, stdout); err != nil {
 		return err
 	}
 	if fs.NArg() > 1 {
@@ -121,12 +118,12 @@ func runsCommand(ctx context.Context, args []string, stdout io.Writer) error {
 }
 
 func pruneCommand(ctx context.Context, args []string, stdout io.Writer) error {
-	fs := flag.NewFlagSet("prune", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs := newFlagSet("prune", "cronwatch prune [--keep N] [--older-than DURATION]",
+		"Delete finished runs beyond the newest N per job and/or older than a duration. Running runs are kept.")
 	dir := fs.String("data-dir", "", "data directory")
 	keep := fs.Int("keep", 0, "finished runs to keep per job (0 = no limit)")
-	olderThan := fs.Duration("older-than", 0, "delete runs and missed occurrences older than this (0 = no limit)")
-	if err := fs.Parse(args); err != nil {
+	olderThan := fs.Duration("older-than", 0, "delete runs and missed occurrences older than this, e.g. 720h (0 = no limit)")
+	if err := parseFlags(fs, args, stdout); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {

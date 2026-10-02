@@ -23,9 +23,8 @@ record runs.
 
 ## Install
 
-Once a release is published, the repository-hosted installer downloads the
-matching Linux or macOS archive, checks its SHA-256 digest, and installs
-CronWatch into `~/.local/bin` without sudo:
+The installer downloads the latest release for Linux or macOS, checks its
+SHA-256 digest, and installs CronWatch into `~/.local/bin` without sudo:
 
 ```sh
 curl -fsSL https://github.com/yeboahd24/cronwatch/releases/latest/download/install.sh | sh
@@ -75,8 +74,48 @@ jobs and logs; it cannot execute commands.
 
 ### Cron example
 
+Take an existing cron entry:
+
+```cron
+0 2 * * * /opt/scripts/backup.sh
+```
+
+and put `cronwatch run ... --` in front of the command:
+
 ```cron
 0 2 * * * $HOME/.local/bin/cronwatch run --name "Database Backup" --schedule "0 2 * * *" --grace 10m -- /opt/scripts/backup.sh
+```
+
+The line has two schedules, and they do different jobs:
+
+```text
+0 2 * * *  $HOME/.local/bin/cronwatch run  --name "Database Backup"  --schedule "0 2 * * *"  --grace 10m  --  /opt/scripts/backup.sh
+└───┬───┘  └─────────────┬──────────────┘  └──────────┬───────────┘  └─────────┬──────────┘  └────┬────┘  │   └─────────┬──────────┘
+    1                    2                            3                        4                  5       6             7
+```
+
+1. **Cron's schedule.** Cron reads this to decide *when to run* the line:
+   02:00 every day. CronWatch does not change it.
+2. **The wrapper.** Cron starts CronWatch, which starts your command and
+   records the result. Use the full path, because cron's `PATH` is minimal.
+3. **The job name** shown on the dashboard.
+4. **CronWatch's copy of the schedule.** It tells CronWatch *when to expect a
+   run*, so it can show the next expected time and flag a run that never
+   started. Keep it identical to (1).
+5. **Grace period.** How late a run may start before it counts as missed.
+   Default 5m.
+6. **`--`** ends CronWatch's flags; everything after it is your command.
+7. **Your command**, exactly as it was before.
+
+You can leave out `--schedule`: while `cronwatch serve` is running, it reads
+your crontab and takes the schedule from (1). Pass `--schedule` when you don't
+run `serve`, or when you want the expectation written next to the command.
+
+Shell redirects after the command still work, because CronWatch passes the
+command's output through:
+
+```cron
+0 2 * * * $HOME/.local/bin/cronwatch run --name "Database Backup" -- /opt/scripts/backup.sh >> $HOME/backup.log 2>&1
 ```
 
 The cron entry and dashboard must run under the same user to see the same
@@ -87,32 +126,147 @@ database. A user-level systemd service example is in
 
 | Command | Purpose |
 | --- | --- |
-| `cronwatch run --name NAME [flags] -- command [args...]` | Execute and record a command |
-| `cronwatch serve [--addr 127.0.0.1:8765]` | Serve the local dashboard |
-| `cronwatch jobs` | List jobs and current status |
-| `cronwatch runs [job-slug]` | List recent runs |
-| `cronwatch prune [--keep N] [--older-than DURATION]` | Delete old finished runs |
-| `cronwatch sync [--crontab FILE]` | Register jobs from your crontab before they run |
-| `cronwatch version` | Print the version |
+| [`cronwatch run`](#cronwatch-run) | Run a command and record the result |
+| [`cronwatch serve`](#cronwatch-serve) | Serve the local dashboard |
+| [`cronwatch jobs`](#cronwatch-jobs) | List jobs and their current status |
+| [`cronwatch runs`](#cronwatch-runs) | List recent runs |
+| [`cronwatch sync`](#cronwatch-sync) | Register jobs from your crontab before they run |
+| [`cronwatch prune`](#cronwatch-prune) | Delete old finished runs |
+| [`cronwatch version`](#cronwatch-version) | Print the version |
 
-All commands except `version` accept `--data-dir`, and flags go before any
-job slug. The
-`CRONWATCH_DATA_DIR` environment variable sets the default directory. Run
-`cronwatch run --help` for capture and schedule flags.
+Run `cronwatch COMMAND --help` (or `cronwatch help COMMAND`) for a command's
+flags. Every command except `version` accepts `--data-dir DIR` to choose the
+database directory. The `CRONWATCH_DATA_DIR` environment variable sets the default,
+which is otherwise `~/.config/cronwatch` on Linux. Flags go before any
+positional argument, e.g. `cronwatch runs --data-dir DIR database-backup`.
 
-Logs are capped at 1 MiB per stream by default (maximum 64 MiB). When output
-exceeds the cap, CronWatch keeps the first and last half and replaces the
-middle with a marker, so the error at the end of a failing job is kept.
-`--max-log-bytes` changes the limit, and `--no-echo` keeps child output off the
-terminal while still storing it. Treat stored logs as sensitive: command output
-may contain secrets.
+### `cronwatch run`
 
-`run` only changes a job's schedule or grace period when you pass `--schedule`
-or `--grace`, so a manual test run does not reset them. Different names that
-produce the same slug share one job; CronWatch prints a warning when that
-happens, and `--slug` keeps them apart.
+```sh
+cronwatch run --name NAME [flags] -- command [args...]
+```
 
-### Crontab sync
+Runs the command, shows its output as usual, and records the run. CronWatch
+exits with the command's exit code, so cron and scripts see the same result as
+before.
+
+```console
+$ cronwatch run --name "Database Backup" --schedule "0 2 * * *" --grace 10m -- /opt/scripts/backup.sh
+Dumping database...
+Backup written to /backups/db.sql.gz
+```
+
+| Flag | Meaning |
+| --- | --- |
+| `--name NAME` | Job name shown on the dashboard. Required. |
+| `--slug SLUG` | Stable ID for the job. Defaults to the name in lowercase with dashes (`database-backup`). |
+| `--schedule "EXPR"` | Five-field cron expression CronWatch should expect the job on. |
+| `--grace DURATION` | How late a run may start before it counts as missed, e.g. `10m`. Default `5m`. |
+| `--max-log-bytes N` | Output kept per stream. Default 1 MiB, maximum 64 MiB. |
+| `--no-echo` | Record output without also printing it. |
+
+`--schedule` and `--grace` only change the stored job when you pass them, so
+running a job by hand to test it does not reset its schedule.
+
+When output exceeds `--max-log-bytes`, CronWatch keeps the first and last half
+and replaces the middle with a marker, so the error at the end of a failing job
+is kept. Treat stored logs as sensitive: command output may contain secrets.
+
+Different names that produce the same slug share one job; CronWatch prints a
+warning when that happens, and `--slug` keeps them apart.
+
+### `cronwatch serve`
+
+```sh
+cronwatch serve [--addr 127.0.0.1:8765]
+```
+
+Serves the dashboard at <http://127.0.0.1:8765>. It is read-only and has no
+login, so it only listens on loopback; reach it from another machine with
+`ssh -L 8765:localhost:8765 user@server`. Binding to another address requires
+`--public`. While running, it also registers jobs from your crontab
+([crontab sync](#crontab-sync)) and checks for missed runs every minute.
+
+To start it at boot from cron:
+
+```cron
+@reboot /usr/bin/flock -n $HOME/.cache/cronwatch-serve.lock $HOME/.local/bin/cronwatch serve >> $HOME/.cache/cronwatch-serve.log 2>&1
+```
+
+### `cronwatch jobs`
+
+Lists every job with its current status:
+
+```console
+$ cronwatch jobs
+NAME              STATUS     LAST RUN          DURATION
+Database Backup   success    2026-10-02 02:00  42s
+Generate Reports  failed     2026-10-02 01:00  800ms
+Queue worker      never_run  —                 —
+```
+
+Statuses: `success`, `failed`, `running`, `cancelled`, `missed` (a scheduled
+run never started), `never_run`, and `invalid_schedule`.
+
+### `cronwatch runs`
+
+Lists the 100 most recent runs, optionally for one job by its slug:
+
+```console
+$ cronwatch runs database-backup
+RUN ID                            JOB              STATUS   STARTED
+9b56e10bd024da121ddce143fd49270c  Database Backup  success  2026-10-02 02:00:01
+```
+
+Open a run's output on the dashboard at `/runs/RUN-ID`.
+
+### `cronwatch sync`
+
+```sh
+cronwatch sync [--crontab FILE]
+```
+
+Registers the jobs in your crontab (`crontab -l`, or `FILE`) so they appear on
+the dashboard before their first run, and lists lines that are not monitored:
+
+```console
+$ cronwatch sync
+Added    Queue worker
+
+2 jobs in the crontab, all registered.
+
+Not monitored (1 line without cronwatch run):
+  line 3: 30 4 * * 0 docker system prune -f
+```
+
+When everything is covered it prints
+`8 jobs in the crontab, all registered. Every crontab line is monitored.`
+`cronwatch serve` runs the same sync every minute, so you rarely need this by
+hand. See [crontab sync](#crontab-sync).
+
+### `cronwatch prune`
+
+```sh
+cronwatch prune [--keep N] [--older-than DURATION]
+```
+
+Deletes finished runs: `--keep N` keeps the newest N per job, and
+`--older-than` deletes runs and missed-run records older than a duration
+(`720h` is 30 days). At least one is required. Running runs are never deleted.
+
+```console
+$ cronwatch prune --keep 200 --older-than 720h
+Deleted 37 runs and 2 missed occurrences.
+```
+
+### `cronwatch version`
+
+```console
+$ cronwatch version
+v0.2.2
+```
+
+## Crontab sync
 
 `cronwatch serve` reads your crontab (`crontab -l`) at startup and every
 minute, and registers every job a line runs through `cronwatch run`. Jobs
@@ -125,7 +279,7 @@ Run `cronwatch sync` to do the same by hand. It also lists crontab lines that
 are not wrapped with `cronwatch run`, so you can see what is not monitored.
 Pass `--sync-crontab=false` to `serve` to turn this off.
 
-### Retention
+## Retention
 
 CronWatch does not delete runs on its own. Schedule `prune` to bound the
 database, for example keeping the latest 200 runs per job and nothing older

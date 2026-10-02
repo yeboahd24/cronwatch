@@ -5,7 +5,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -140,11 +139,11 @@ func syncCrontab(ctx context.Context, s *storage.Store, text string) (syncResult
 }
 
 func syncCommand(ctx context.Context, args []string, stdout io.Writer) error {
-	fs := flag.NewFlagSet("sync", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs := newFlagSet("sync", "cronwatch sync [--crontab FILE]",
+		"Register the jobs your crontab runs through \"cronwatch run\", and list lines that are not monitored.")
 	dir := fs.String("data-dir", "", "data directory")
-	file := fs.String("crontab", "", "read this crontab file instead of `crontab -l` (- for stdin)")
-	if err := fs.Parse(args); err != nil {
+	file := fs.String("crontab", "", "read this crontab `file` instead of \"crontab -l\" (- for stdin)")
+	if err := parseFlags(fs, args, stdout); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {

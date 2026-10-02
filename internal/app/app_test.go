@@ -168,3 +168,21 @@ func TestPruneCommand(t *testing.T) {
 		t.Fatalf("out = %q", out.String())
 	}
 }
+
+func TestHelpForEveryCommand(t *testing.T) {
+	for _, args := range [][]string{
+		{"run", "--help"}, {"run", "-h", "--", "true"}, {"serve", "--help"}, {"jobs", "-h"},
+		{"runs", "--help"}, {"prune", "--help"}, {"sync", "--help"}, {"help", "run"},
+	} {
+		var out bytes.Buffer
+		if err := Run(context.Background(), args, &out, &bytes.Buffer{}); err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+		if !strings.HasPrefix(out.String(), "Usage: cronwatch "+map[bool]string{true: args[1], false: args[0]}[args[0] == "help"]) {
+			t.Fatalf("%v: output = %q", args, out.String())
+		}
+	}
+	if err := Run(context.Background(), []string{"jobs", "--nope"}, &bytes.Buffer{}, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "-nope") {
+		t.Fatalf("bad flag error = %v", err)
+	}
+}

@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"net"
@@ -29,13 +28,13 @@ func loopbackAddress(addr string) bool {
 }
 
 func serveCommand(ctx context.Context, args []string, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	fs := newFlagSet("serve", "cronwatch serve [flags]",
+		"Serve the read-only dashboard, register jobs from your crontab, and check for missed runs.")
 	addr := fs.String("addr", "127.0.0.1:8765", "HTTP listen address")
 	public := fs.Bool("public", false, "allow non-loopback bind")
 	dataDir := fs.String("data-dir", "", "data directory")
 	syncTab := fs.Bool("sync-crontab", true, "register jobs found in the user's crontab")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args, stdout); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
