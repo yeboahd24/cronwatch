@@ -28,6 +28,8 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return runsCommand(ctx, args[1:], stdout)
 	case "prune":
 		return pruneCommand(ctx, args[1:], stdout)
+	case "sync":
+		return syncCommand(ctx, args[1:], stdout)
 	case "help", "-h", "--help":
 		printHelp(stdout)
 		return nil
@@ -45,5 +47,6 @@ Usage:
   cronwatch jobs
   cronwatch runs [job]
   cronwatch prune [--keep N] [--older-than DURATION]
+  cronwatch sync [--crontab FILE]
   cronwatch version`)
 }

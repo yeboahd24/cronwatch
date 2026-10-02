@@ -92,6 +92,7 @@ database. A user-level systemd service example is in
 | `cronwatch jobs` | List jobs and current status |
 | `cronwatch runs [job-slug]` | List recent runs |
 | `cronwatch prune [--keep N] [--older-than DURATION]` | Delete old finished runs |
+| `cronwatch sync [--crontab FILE]` | Register jobs from your crontab before they run |
 | `cronwatch version` | Print the version |
 
 All commands except `version` accept `--data-dir`, and flags go before any
@@ -110,6 +111,19 @@ may contain secrets.
 or `--grace`, so a manual test run does not reset them. Different names that
 produce the same slug share one job; CronWatch prints a warning when that
 happens, and `--slug` keeps them apart.
+
+### Crontab sync
+
+`cronwatch serve` reads your crontab (`crontab -l`) at startup and every
+minute, and registers every job a line runs through `cronwatch run`. Jobs
+appear on the dashboard as **Never run**, with their next expected time,
+before their first run. A line without `--schedule` uses its own cron
+schedule. Sync never deletes jobs, and it only corrects the schedule and grace
+period of existing jobs; names and commands come from real runs.
+
+Run `cronwatch sync` to do the same by hand. It also lists crontab lines that
+are not wrapped with `cronwatch run`, so you can see what is not monitored.
+Pass `--sync-crontab=false` to `serve` to turn this off.
 
 ### Retention
 

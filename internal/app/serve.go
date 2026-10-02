@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/yeboahd24/cronwatch/internal/config"
@@ -33,6 +34,7 @@ func serveCommand(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	addr := fs.String("addr", "127.0.0.1:8765", "HTTP listen address")
 	public := fs.Bool("public", false, "allow non-loopback bind")
 	dataDir := fs.String("data-dir", "", "data directory")
+	syncTab := fs.Bool("sync-crontab", true, "register jobs found in the user's crontab")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -68,7 +70,7 @@ func serveCommand(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	server := &http.Server{Handler: web.Router, ReadHeaderTimeout: 5 * time.Second}
 	fmt.Fprintf(stdout, "CronWatch UI: http://%s\n", listener.Addr())
 	done := make(chan struct{})
-	go maintenanceLoop(ctx, done, s, stderr)
+	go maintenanceLoop(ctx, done, s, *syncTab, stderr)
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -86,13 +88,37 @@ func serveCommand(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	return err
 }
 
-// maintenanceLoop periodically closes out runs whose cronwatch process died
-// and records missed occurrences, so missed runs are detected even when nobody
-// is looking at the UI.
-func maintenanceLoop(ctx context.Context, done <-chan struct{}, s *storage.Store, stderr io.Writer) {
+// maintenanceLoop periodically registers crontab jobs, closes out runs whose
+// cronwatch process died and records missed occurrences, so the dashboard is
+// current even when nobody is looking at it.
+func maintenanceLoop(ctx context.Context, done <-chan struct{}, s *storage.Store, syncTab bool, stderr io.Writer) {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
+	lastProblems := ""
 	for {
+		if syncTab {
+			result, err := syncFromUserCrontab(ctx, s)
+			switch {
+			case errors.Is(err, errNoCrontabCommand):
+				syncTab = false
+			case err != nil && ctx.Err() == nil:
+				fmt.Fprintln(stderr, "crontab sync:", err)
+			case err == nil:
+				for _, name := range result.Added {
+					fmt.Fprintf(stderr, "crontab sync: added %s\n", name)
+				}
+				for _, name := range result.Updated {
+					fmt.Fprintf(stderr, "crontab sync: updated %s\n", name)
+				}
+				// Report unreadable lines when they change, not every minute.
+				if problems := strings.Join(result.Problems, "; "); problems != lastProblems {
+					if problems != "" {
+						fmt.Fprintln(stderr, "crontab sync: could not read:", problems)
+					}
+					lastProblems = problems
+				}
+			}
+		}
 		if err := maintain(ctx, s); err != nil && ctx.Err() == nil {
 			fmt.Fprintln(stderr, "maintenance:", err)
 		}
@@ -116,4 +142,12 @@ func maintain(ctx context.Context, s *storage.Store) error {
 		return fmt.Errorf("detect missed runs: %w", err)
 	}
 	return nil
+}
+
+func syncFromUserCrontab(ctx context.Context, s *storage.Store) (syncResult, error) {
+	text, err := readUserCrontab(ctx)
+	if err != nil {
+		return syncResult{}, err
+	}
+	return syncCrontab(ctx, s, text)
 }

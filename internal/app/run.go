@@ -56,9 +56,21 @@ func validSlug(slug string) bool {
 	return true
 }
 
-func runCommand(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+// runOptions is a parsed "cronwatch run" invocation.
+type runOptions struct {
+	Spec        storage.JobSpec // only flags that were passed are set
+	Command     []string
+	DataDir     string
+	NoEcho      bool
+	MaxLogBytes int64
+}
+
+// parseRunArgs parses "cronwatch run" arguments. It is shared with crontab
+// sync so both derive the same job from the same arguments.
+func parseRunArgs(args []string, flagOutput io.Writer) (runOptions, error) {
+	var opts runOptions
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	fs.SetOutput(flagOutput)
 	name := fs.String("name", "", "human-readable job name")
 	slug := fs.String("slug", "", "stable job slug")
 	expr := fs.String("schedule", "", "5-field cron expression")
@@ -74,66 +86,81 @@ func runCommand(ctx context.Context, args []string, stdout, stderr io.Writer) er
 		}
 	}
 	if sep < 0 {
-		return errors.New("run requires -- command [args...]")
+		return opts, errors.New("run requires -- command [args...]")
 	}
 	if err := fs.Parse(args[:sep]); err != nil {
-		return err
+		return opts, err
 	}
 	if fs.NArg() != 0 {
-		return errors.New("unexpected arguments before --")
+		return opts, errors.New("unexpected arguments before --")
 	}
 	command := args[sep+1:]
 	if strings.TrimSpace(*name) == "" {
-		return errors.New("--name is required")
+		return opts, errors.New("--name is required")
 	}
 	if len(command) == 0 {
-		return errors.New("child command is required")
+		return opts, errors.New("child command is required")
 	}
 	if *grace < 0 {
-		return errors.New("--grace must be non-negative")
+		return opts, errors.New("--grace must be non-negative")
 	}
 	// Logs are buffered in memory and the combined log (2x) must fit in one
 	// SQLite value, so keep the cap well below SQLite's 1 GB limit.
 	if *maxLogBytes < 0 || *maxLogBytes > maxLogBytesLimit {
-		return errors.New("--max-log-bytes must be between 0 and 64 MiB")
+		return opts, errors.New("--max-log-bytes must be between 0 and 64 MiB")
 	}
 	if *expr != "" {
 		if err := schedule.Validate(*expr, time.Now()); err != nil {
-			return err
+			return opts, err
 		}
 	}
 	if *slug == "" {
 		*slug = slugify(*name)
 	}
 	if !validSlug(*slug) {
-		return errors.New("--slug must contain lowercase letters, digits, or hyphens")
+		return opts, errors.New("--slug must contain lowercase letters, digits, or hyphens")
 	}
-	if *dataDir == "" {
-		cfg, err := config.Load()
-		if err != nil {
-			return err
-		}
-		*dataDir = cfg.DataDir
-	}
-	s, err := storage.Open(ctx, *dataDir)
-	if err != nil {
-		return err
-	}
-	defer s.Close()
 	parts := make([]string, len(command))
 	for i, p := range command {
 		parts[i] = strconv.Quote(p)
 	}
-	spec := storage.JobSpec{Slug: *slug, Name: *name, Command: strings.Join(parts, " ")}
+	opts = runOptions{
+		Spec:        storage.JobSpec{Slug: *slug, Name: *name, Command: strings.Join(parts, " ")},
+		Command:     command,
+		DataDir:     *dataDir,
+		NoEcho:      *noEcho,
+		MaxLogBytes: *maxLogBytes,
+	}
 	// Only flags passed on this invocation change the stored job.
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
 		case "schedule":
-			spec.Schedule = expr
+			opts.Spec.Schedule = expr
 		case "grace":
-			spec.Grace = grace
+			opts.Spec.Grace = grace
 		}
 	})
+	return opts, nil
+}
+
+func runCommand(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	opts, err := parseRunArgs(args, stderr)
+	if err != nil {
+		return err
+	}
+	spec, command := opts.Spec, opts.Command
+	if opts.DataDir == "" {
+		cfg, err := config.Load()
+		if err != nil {
+			return err
+		}
+		opts.DataDir = cfg.DataDir
+	}
+	s, err := storage.Open(ctx, opts.DataDir)
+	if err != nil {
+		return err
+	}
+	defer s.Close()
 	// Different names that slugify alike would silently share one history.
 	if existing, err := s.GetJobBySlug(ctx, spec.Slug); err == nil && existing.Name != spec.Name {
 		fmt.Fprintf(stderr, "cronwatch: warning: slug %q belongs to job %q; renaming it to %q (pass --slug to keep them separate)\n", spec.Slug, existing.Name, spec.Name)
@@ -148,11 +175,11 @@ func runCommand(ctx context.Context, args []string, stdout, stderr io.Writer) er
 		return err
 	}
 	var out, errOut io.Writer
-	if !*noEcho {
+	if !opts.NoEcho {
 		out = stdout
 		errOut = stderr
 	}
-	result, runErr := runner.Execute(ctx, command, out, errOut, *maxLogBytes)
+	result, runErr := runner.Execute(ctx, command, out, errOut, opts.MaxLogBytes)
 	code := result.ExitCode
 	// A cancelled context cannot be used to save the final state.
 	finishCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
