@@ -1,0 +1,12 @@
+[Unit]
+Description=CronWatch local dashboard
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/cronwatch serve --addr 127.0.0.1:8765
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

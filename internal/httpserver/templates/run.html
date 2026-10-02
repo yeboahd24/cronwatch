@@ -1,0 +1,8 @@
+{{define "run.html"}}
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Run · {{.Job.Name}} · CronWatch</title><link rel="stylesheet" href="/static/app.css"></head>
+<body><main class="shell"><header class="topbar"><div><a href="/jobs/{{.Job.ID}}" class="back">← {{.Job.Name}}</a><h1>Run details</h1><p>{{time .Run.StartedAt}}</p></div><span class="status status-{{.Run.Status}}">{{.Run.Status}}</span></header>
+<section class="panel details"><dl><dt>Exit code</dt><dd>{{if .Run.ExitCode}}{{.Run.ExitCode}}{{else}}—{{end}}</dd><dt>Duration</dt><dd>{{duration .Run.DurationMS}}</dd><dt>Ended</dt><dd>{{maybeTime .Run.EndedAt}}</dd><dt>Truncated</dt><dd>{{if .Run.Truncated}}Yes{{else}}No{{end}}</dd></dl></section>
+<h2>Combined log</h2><pre class="log-viewer">{{.Run.CombinedLog}}</pre>
+<h2>Stdout</h2><pre class="log-viewer">{{.Run.Stdout}}</pre>
+<h2>Stderr</h2><pre class="log-viewer">{{.Run.Stderr}}</pre>
+</main></body></html>{{end}}

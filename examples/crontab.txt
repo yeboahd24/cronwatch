@@ -1,0 +1,5 @@
+# Database backup at 02:00 daily
+0 2 * * * $HOME/.local/bin/cronwatch run --name "Database Backup" --schedule "0 2 * * *" --grace 15m -- /opt/scripts/backup.sh
+
+# Daily report at 06:00
+0 6 * * * $HOME/.local/bin/cronwatch run --name "Generate Reports" --schedule "0 6 * * *" -- /opt/apps/generate-report

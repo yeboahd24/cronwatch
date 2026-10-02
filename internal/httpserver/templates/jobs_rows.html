@@ -1,0 +1,11 @@
+{{define "jobs_rows"}}<tbody id="jobs-body">
+{{range .Jobs}}
+<tr>
+  <td data-label="Job"><a href="/jobs/{{.ID}}">{{.Name}}</a><small>{{.Slug}}</small></td>
+  <td data-label="Status"><span class="status status-{{.Status}}">{{.Status}}</span></td>
+  <td data-label="Last Run">{{if .LastRun}}{{time .LastRun.StartedAt}}{{else}}—{{end}}</td>
+  <td data-label="Duration">{{if .LastRun}}{{duration .LastRun.DurationMS}}{{else}}—{{end}}</td>
+  <td data-label="Next Expected">{{maybeTime .NextExpectedAt}}</td>
+</tr>
+{{else}}<tr><td colspan="5" class="empty">No jobs yet. Run a command through <code>cronwatch run</code>.</td></tr>{{end}}
+</tbody>{{end}}

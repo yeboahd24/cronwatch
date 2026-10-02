@@ -1,0 +1,9 @@
+{{define "job.html"}}
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{.View.Name}} · CronWatch</title><link rel="stylesheet" href="/static/app.css"></head>
+<body><main class="shell">
+<header class="topbar"><div><a href="/" class="back">← Jobs</a><h1>{{.View.Name}}</h1><p>{{.View.Slug}}</p></div><span class="status status-{{.View.Status}}">{{.View.Status}}</span></header>
+<section class="panel details"><dl><dt>Command</dt><dd><code>{{.View.Command}}</code></dd><dt>Schedule</dt><dd>{{if .View.Schedule}}<code>{{.View.Schedule}}</code>{{else}}—{{end}}</dd><dt>Grace</dt><dd>{{.View.GraceSeconds}}s</dd><dt>Next expected</dt><dd>{{maybeTime .View.NextExpectedAt}}</dd></dl></section>
+<h2>Recent runs</h2><section class="panel table-wrap"><table><thead><tr><th>Started</th><th>Status</th><th>Duration</th><th>Exit code</th></tr></thead><tbody>
+{{range .Runs}}<tr><td data-label="Started"><a href="/runs/{{.ID}}">{{time .StartedAt}}</a></td><td data-label="Status"><span class="status status-{{.Status}}">{{.Status}}</span></td><td data-label="Duration">{{duration .DurationMS}}</td><td data-label="Exit code">{{if .ExitCode}}{{.ExitCode}}{{else}}—{{end}}</td></tr>
+{{else}}<tr><td colspan="4" class="empty">No runs recorded.</td></tr>{{end}}
+</tbody></table></section></main></body></html>{{end}}
