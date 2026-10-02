@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yeboahd24/cronwatch/internal/crontab"
 	"github.com/yeboahd24/cronwatch/internal/storage"
 )
 
@@ -32,7 +33,7 @@ func TestSyncCrontab(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(result.Added, ",") != "DB backup,Ingest queue" || len(result.Updated) != 0 {
+	if strings.Join(result.Added, ",") != "DB backup,Ingest queue" || len(result.Updated) != 0 || result.Jobs != 2 {
 		t.Fatalf("result = %+v", result)
 	}
 	if len(result.Unmonitored) != 1 || result.Unmonitored[0].Line != 4 {
@@ -107,5 +108,25 @@ func TestSyncedJobMatchesRealRun(t *testing.T) {
 	}
 	if len(jobs) != 1 || *jobs[0].Schedule != "*/5 * * * *" || jobs[0].Command != `"sh" "-c" "echo ok"` {
 		t.Fatalf("jobs = %+v", jobs)
+	}
+}
+
+func TestPrintSyncResult(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   syncResult
+		want string
+	}{
+		{"up to date", syncResult{Jobs: 8}, "8 jobs in the crontab, all registered. Every crontab line is monitored.\n"},
+		{"added one", syncResult{Jobs: 1, Added: []string{"Backup"}}, "Added    Backup\n\n1 job in the crontab, all registered. Every crontab line is monitored.\n"},
+		{"empty", syncResult{}, "No crontab lines use cronwatch run.\n"},
+		{"problems and unmonitored", syncResult{Jobs: 2, Problems: []string{"line 4: bad"}, Unmonitored: []crontab.Entry{{Line: 7, Raw: "@daily", Command: "backup.sh"}}},
+			"2 of 3 jobs in the crontab registered.\n\nCould not read 1 cronwatch line:\n  line 4: bad\n\nNot monitored (1 line without cronwatch run):\n  line 7: @daily backup.sh\n"},
+	} {
+		var out bytes.Buffer
+		printSyncResult(&out, tc.in)
+		if out.String() != tc.want {
+			t.Errorf("%s:\ngot  %q\nwant %q", tc.name, out.String(), tc.want)
+		}
 	}
 }

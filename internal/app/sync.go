@@ -41,6 +41,7 @@ func readUserCrontab(ctx context.Context) (string, error) {
 
 // syncResult describes what syncCrontab did.
 type syncResult struct {
+	Jobs           int             // cronwatch run lines registered (new, updated or unchanged)
 	Added, Updated []string        // job names
 	Unmonitored    []crontab.Entry // lines that do not use cronwatch
 	Problems       []string        // lines that use cronwatch run but could not be read
@@ -107,6 +108,7 @@ func syncCrontab(ctx context.Context, s *storage.Store, text string) (syncResult
 			expr := entry.Schedule
 			spec.Schedule = &expr
 		}
+		result.Jobs++
 
 		existing, err := s.GetJobBySlug(ctx, spec.Slug)
 		switch {
@@ -181,24 +183,47 @@ func syncCommand(ctx context.Context, args []string, stdout io.Writer) error {
 	return nil
 }
 
-func printSyncResult(w io.Writer, r syncResult) {
-	if len(r.Added) == 0 && len(r.Updated) == 0 {
-		fmt.Fprintln(w, "Jobs are up to date with the crontab.")
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return fmt.Sprintf("%d %s", n, one)
 	}
+	return fmt.Sprintf("%d %s", n, many)
+}
+
+func printSyncResult(w io.Writer, r syncResult) {
 	for _, name := range r.Added {
 		fmt.Fprintf(w, "Added    %s\n", name)
 	}
 	for _, name := range r.Updated {
 		fmt.Fprintf(w, "Updated  %s\n", name)
 	}
+	if len(r.Added)+len(r.Updated) > 0 {
+		fmt.Fprintln(w)
+	}
+
+	total := r.Jobs + len(r.Problems)
+	var summary string
+	switch {
+	case total == 0:
+		summary = "No crontab lines use cronwatch run."
+	case len(r.Problems) == 0:
+		summary = plural(total, "job", "jobs") + " in the crontab, all registered."
+	default:
+		summary = fmt.Sprintf("%d of %s in the crontab registered.", r.Jobs, plural(total, "job", "jobs"))
+	}
+	if len(r.Unmonitored) == 0 && total > 0 {
+		summary += " Every crontab line is monitored."
+	}
+	fmt.Fprintln(w, summary)
+
 	if len(r.Problems) > 0 {
-		fmt.Fprintf(w, "\nCould not read %d cronwatch line(s):\n", len(r.Problems))
+		fmt.Fprintf(w, "\nCould not read %s:\n", plural(len(r.Problems), "cronwatch line", "cronwatch lines"))
 		for _, p := range r.Problems {
 			fmt.Fprintf(w, "  %s\n", p)
 		}
 	}
 	if len(r.Unmonitored) > 0 {
-		fmt.Fprintf(w, "\nNot monitored (%d line(s) without cronwatch run):\n", len(r.Unmonitored))
+		fmt.Fprintf(w, "\nNot monitored (%s without cronwatch run):\n", plural(len(r.Unmonitored), "line", "lines"))
 		for _, e := range r.Unmonitored {
 			fmt.Fprintf(w, "  line %d: %s %s\n", e.Line, e.Raw, e.Command)
 		}
