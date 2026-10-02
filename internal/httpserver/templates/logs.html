@@ -1,0 +1,25 @@
+{{define "logs.html"}}{{template "head" .}}
+<h1 class="visually-hidden">Logs</h1>
+{{with .Data}}
+<form class="log-search" method="get" action="/logs" role="search">
+  <label class="visually-hidden" for="log-query">Search output</label>
+  <input id="log-query" name="q" type="search" value="{{.Query}}" placeholder="Search output of recent runs" autocomplete="off">
+  <label class="check"><input type="checkbox" name="errors" value="1"{{if .OnlyErrors}} checked{{end}}> Errors only</label>
+  <button type="submit">Search</button>
+</form>
+{{range .Results}}
+<section class="panel log-result">
+  <div class="panel-head">
+    <a class="run-ref" href="/jobs/{{.Run.JobID}}">{{.JobName}}</a>
+    <a class="run-ref muted" href="/runs/{{.Run.ID}}">{{template "time" .Run.StartedAt}}</a>
+    {{template "status" .Run.Status}}
+    <a class="panel-link" href="/runs/{{.Run.ID}}">Open run <span aria-hidden="true">→</span></a>
+  </div>
+  <div class="log-viewer">{{template "loglines" .Lines}}</div>
+  {{if .Hidden}}<p class="more"><a href="/runs/{{.Run.ID}}">{{.Hidden}} more {{if or $.Data.Query $.Data.OnlyErrors}}matching {{end}}lines</a></p>{{end}}
+</section>
+{{else}}
+<section class="panel"><p class="empty">{{if or .Query .OnlyErrors}}No matching lines in the last 50 runs.{{else}}No output recorded yet.{{end}}</p></section>
+{{end}}
+{{end}}
+{{template "foot"}}{{end}}

@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/yeboahd24/cronwatch/internal/logs"
 )
 
 func TestCaptureTruncatesWithoutStoppingChild(t *testing.T) {
@@ -22,7 +24,8 @@ func TestCaptureTruncatesWithoutStoppingChild(t *testing.T) {
 	if !strings.HasPrefix(result.Stderr, "ab\n") || !strings.HasSuffix(result.Stderr, "\nhi") {
 		t.Fatalf("stderr = %q", result.Stderr)
 	}
-	if !strings.HasPrefix(result.Combined, "1234\n") || !strings.HasSuffix(result.Combined, "\nfghi") {
+	// Combined is "123456789\n" + StderrMark + "abcdefghi\n", capped at 8 bytes.
+	if !strings.HasPrefix(result.Combined, "1234\n") || !strings.HasSuffix(result.Combined, "\nghi\n") {
 		t.Fatalf("combined = %q", result.Combined)
 	}
 }
@@ -88,5 +91,35 @@ func TestCancelStopsGrandchildren(t *testing.T) {
 	}
 	if elapsed := time.Since(started); elapsed > 3*time.Second {
 		t.Fatalf("cancel took %s", elapsed)
+	}
+}
+
+func TestCombinedLogTagsStderrLines(t *testing.T) {
+	result, err := Execute(context.Background(), []string{"sh", "-c", "echo out1; echo err1 >&2; printf 'tail-no-newline'"}, nil, nil, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := logs.Parse(result.Combined)
+	got := map[string]bool{}
+	for _, l := range lines {
+		got[l.Text] = l.IsStderr()
+	}
+	if len(lines) != 3 || got["out1"] || !got["err1"] || got["tail-no-newline"] {
+		t.Fatalf("lines = %+v", lines)
+	}
+	if result.Stdout != "out1\ntail-no-newline" || result.Stderr != "err1\n" {
+		t.Fatalf("streams = %q / %q", result.Stdout, result.Stderr)
+	}
+}
+
+func TestLongLineWithoutNewlineIsBounded(t *testing.T) {
+	c := &capture{stdout: newBoundedBuffer(1 << 20), stderr: newBoundedBuffer(1 << 20), combined: newBoundedBuffer(2 << 20)}
+	s := &stream{c: c, dst: c.stdout}
+	chunk := []byte(strings.Repeat("x", 1000))
+	for range 200 {
+		_, _ = s.Write(chunk)
+		if len(s.pending) >= maxPendingLine {
+			t.Fatalf("pending grew to %d", len(s.pending))
+		}
 	}
 }

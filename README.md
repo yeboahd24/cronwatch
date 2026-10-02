@@ -62,6 +62,17 @@ ssh -L 8765:localhost:8765 user@server
 Then open <http://localhost:8765> on the workstation. The browser can inspect
 jobs and logs; it cannot execute commands.
 
+### Dashboard
+
+- **Jobs** lists every job with its status, last run, duration, and next
+  expected run, and refreshes every 10 seconds. Below it, **Recent logs** shows
+  the end of the latest failing run's output (or the latest run when nothing
+  is failing). Lines the command wrote to stderr are shown in red.
+- **Runs** lists recent runs across all jobs. A run's page shows its last error,
+  and its output opens at the end, with All / Stdout / Stderr views.
+- **Logs** searches the output of the last 50 runs; **Errors only** limits
+  results to stderr lines.
+
 ### Cron example
 
 ```cron

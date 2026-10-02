@@ -8,10 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/yeboahd24/cronwatch/internal/db"
+	"github.com/yeboahd24/cronwatch/internal/logs"
 	"github.com/yeboahd24/cronwatch/internal/model"
 	"github.com/yeboahd24/cronwatch/internal/schedule"
 )
@@ -233,10 +235,36 @@ func (s *Store) ListRunsWithJob(ctx context.Context, limit int) ([]RunWithJob, e
 	return out, nil
 }
 
+// SearchRunLogs returns the newest finished runs whose combined log contains
+// query, ignoring ASCII case. An empty query matches every run.
+func (s *Store) SearchRunLogs(ctx context.Context, query string, limit int) ([]RunWithJob, error) {
+	rows, err := db.New(s.DB).SearchRunLogs(ctx, db.SearchRunLogsParams{Query: query, RowLimit: int64(limit)})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]RunWithJob, 0, len(rows))
+	for _, row := range rows {
+		r, e := convertRun(row.Run)
+		if e != nil {
+			return nil, e
+		}
+		out = append(out, RunWithJob{Run: r, JobName: row.JobName})
+	}
+	return out, nil
+}
+
 // processGone reports whether pid definitely no longer exists. EPERM means the
 // process exists under another user, so it is treated as alive.
 func processGone(pid int64) bool {
 	return errors.Is(syscall.Kill(int(pid), 0), syscall.ESRCH)
+}
+
+// appendLine appends line to log, starting it on a new line.
+func appendLine(log, line string) string {
+	if log != "" && !strings.HasSuffix(log, "\n") {
+		log += "\n"
+	}
+	return log + line
 }
 
 // ReapAbandonedRuns marks running runs as failed when the cronwatch process
@@ -258,9 +286,9 @@ func (s *Store) ReapAbandonedRuns(ctx context.Context) (int, error) {
 			return reaped, err
 		}
 		ended := time.Now()
-		note := fmt.Sprintf("\ncronwatch: run abandoned; owner process %d exited without recording a result\n", row.Pid.Int64)
+		note := fmt.Sprintf("cronwatch: run abandoned; owner process %d exited without recording a result\n", row.Pid.Int64)
 		err = s.FinishRun(ctx, row.ID, ended, ended.Sub(started), "failed", nil,
-			row.Stdout, row.Stderr+note, row.CombinedLog+note, row.Truncated != 0)
+			row.Stdout, appendLine(row.Stderr, note), appendLine(row.CombinedLog, string(logs.StderrMark)+note), row.Truncated != 0)
 		if err != nil {
 			// The owner may have finished the run concurrently.
 			continue
@@ -315,6 +343,7 @@ func (s *Store) JobView(ctx context.Context, j model.Job, now time.Time) (model.
 	}
 	if missed != nil && (v.LastRun == nil || v.LastRun.StartedAt.Before(*missed)) {
 		v.Status = "missed"
+		v.MissedAt = missed
 	}
 	return v, nil
 }

@@ -1,8 +1,28 @@
-{{define "run.html"}}
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Run · {{.Job.Name}} · CronWatch</title><link rel="stylesheet" href="/static/app.css"></head>
-<body><main class="shell"><header class="topbar"><div><a href="/jobs/{{.Job.ID}}" class="back">← {{.Job.Name}}</a><h1>Run details</h1><p>{{time .Run.StartedAt}}</p></div><span class="status status-{{.Run.Status}}">{{.Run.Status}}</span></header>
-<section class="panel details"><dl><dt>Exit code</dt><dd>{{if .Run.ExitCode}}{{.Run.ExitCode}}{{else}}—{{end}}</dd><dt>Duration</dt><dd>{{duration .Run.DurationMS}}</dd><dt>Ended</dt><dd>{{maybeTime .Run.EndedAt}}</dd><dt>Truncated</dt><dd>{{if .Run.Truncated}}Yes{{else}}No{{end}}</dd></dl></section>
-<h2>Combined log</h2><pre class="log-viewer">{{.Run.CombinedLog}}</pre>
-<h2>Stdout</h2><pre class="log-viewer">{{.Run.Stdout}}</pre>
-<h2>Stderr</h2><pre class="log-viewer">{{.Run.Stderr}}</pre>
-</main></body></html>{{end}}
+{{define "run.html"}}{{template "head" .}}
+{{with .Data}}
+<a href="/jobs/{{.Job.ID}}" class="back"><span aria-hidden="true">←</span> {{.Job.Name}}</a>
+<div class="page-title">
+  <div><h1>Run · {{.Job.Name}}</h1><p class="subtitle">{{full .Run.StartedAt}}</p></div>
+  {{template "status" .Run.Status}}
+</div>
+{{if .LastError}}<div class="error-callout" role="note"><span class="error-label">Last error</span><code>{{.LastError}}</code></div>{{end}}
+<section class="panel details">
+  <dl>
+    <dt>Exit code</dt><dd>{{if .Run.ExitCode}}{{.Run.ExitCode}}{{else}}—{{end}}</dd>
+    <dt>Duration</dt><dd>{{duration .Run.DurationMS}}</dd>
+    <dt>Ended</dt><dd>{{if .Run.EndedAt}}{{template "time" .Run.EndedAt}}{{else}}—{{end}}</dd>
+    {{if .Run.Truncated}}<dt>Output</dt><dd class="text-warning">Truncated — the middle of the output was dropped to fit the capture limit</dd>{{end}}
+  </dl>
+</section>
+<div class="section-head">
+  <h2>Output</h2>
+  <nav class="segmented" aria-label="Output stream">
+    <a href="?stream=all"{{if eq .Stream "all"}} aria-current="page"{{end}}>All</a>
+    <a href="?stream=stdout"{{if eq .Stream "stdout"}} aria-current="page"{{end}}>Stdout</a>
+    <a href="?stream=stderr"{{if eq .Stream "stderr"}} aria-current="page"{{end}}>Stderr</a>
+  </nav>
+</div>
+{{if .Lines}}<div class="log-viewer log-viewer-tall" data-scroll-end tabindex="0" aria-label="Run output">{{template "loglines" .Lines}}</div>
+{{else}}<div class="panel"><p class="empty">No output on this stream.</p></div>{{end}}
+{{end}}
+{{template "foot"}}{{end}}

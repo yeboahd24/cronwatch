@@ -1,45 +1,41 @@
-{{define "index.html"}}
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>CronWatch</title>
-  <link rel="stylesheet" href="/static/app.css">
-</head>
-<body>
-<main class="shell">
-  <header class="topbar">
-    <div>
-      <h1>CronWatch</h1>
-      <p>Local web UI for scheduled jobs</p>
-    </div>
-    <span class="local-badge">LOCAL</span>
-  </header>
-
-  <nav class="tabs">
-    <a class="active" href="/">Jobs</a>
-    <a href="/runs">Runs</a>
-  </nav>
-
-  <section class="panel">
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Job</th>
-            <th>Status</th>
-            <th>Last Run</th>
-            <th>Duration</th>
-            <th>Next Expected</th>
-          </tr>
-        </thead>
-        {{template "jobs_rows" .}}
-      </table>
-    </div>
-  </section>
-</main>
-<script src="/static/app.js" defer></script>
-</body>
-</html>
+{{define "index.html"}}{{template "head" .}}
+<h1 class="visually-hidden">Jobs</h1>
+{{with .Data}}
+<section class="panel table-wrap">
+  <table class="jobs-table">
+    <thead>
+      <tr><th scope="col">Job</th><th scope="col">Status</th><th scope="col">Last run</th><th scope="col">Duration</th><th scope="col">Next expected</th></tr>
+    </thead>
+    {{template "jobs_body" .}}
+  </table>
+</section>
+{{template "recent_logs" .Recent}}
 {{end}}
+{{template "foot"}}{{end}}
+
+{{define "jobs_body"}}<tbody id="jobs-body">
+{{- range .Jobs}}
+<tr>
+  <td data-label="Job" class="cell-job"><a href="/jobs/{{.ID}}">{{.Name}}</a><small>{{.Slug}}</small></td>
+  <td data-label="Status" class="cell-status">{{template "status" .Status}}{{if .MissedAt}}<small>expected {{template "time" .MissedAt}}</small>{{end}}</td>
+  <td data-label="Last run">{{if .LastRun}}<a href="/runs/{{.LastRun.ID}}">{{template "time" .LastRun.StartedAt}}</a>{{else}}—{{end}}</td>
+  <td data-label="Duration">{{if .LastRun}}{{duration .LastRun.DurationMS}}{{else}}—{{end}}</td>
+  <td data-label="Next expected">{{if .NextExpectedAt}}{{template "time" .NextExpectedAt}}{{else}}—{{end}}</td>
+</tr>
+{{- else}}
+<tr><td colspan="5" class="empty">No jobs yet. Wrap a command with <code>cronwatch run --name "My job" -- ./script.sh</code>.</td></tr>
+{{- end}}
+</tbody>{{end}}
+
+{{define "recent_logs"}}{{if .}}<section class="panel recent-logs" id="recent-logs" aria-labelledby="recent-logs-title">
+  <div class="panel-head">
+    <h2 id="recent-logs-title">Recent logs</h2>
+    <a class="run-ref" href="/runs/{{.Run.ID}}">{{.JobName}} · {{template "time" .Run.StartedAt}}</a>
+    {{template "status" .Run.Status}}
+    <a class="panel-link" href="/logs">View all <span aria-hidden="true">→</span></a>
+  </div>
+  {{if .Lines}}<div class="log-viewer" data-scroll-end>{{template "loglines" .Lines}}</div>
+  {{else}}<p class="empty">This run produced no output.</p>{{end}}
+</section>{{else}}<section id="recent-logs" hidden></section>{{end}}{{end}}
+
+{{define "dashboard_live"}}<table>{{template "jobs_body" .}}</table>{{template "recent_logs" .Recent}}{{end}}

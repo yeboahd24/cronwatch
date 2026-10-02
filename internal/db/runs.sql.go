@@ -297,3 +297,60 @@ func (q *Queries) ListRunsWithJob(ctx context.Context, limit int64) ([]ListRunsW
 	}
 	return items, nil
 }
+
+const searchRunLogs = `-- name: SearchRunLogs :many
+SELECT runs.id, runs.job_id, runs.started_at, runs.ended_at, runs.duration_ms, runs.status, runs.exit_code, runs.stdout, runs.stderr, runs.combined_log, runs.truncated, runs.created_at, runs.pid, runs.host, jobs.name AS job_name
+FROM runs JOIN jobs ON jobs.id = runs.job_id
+WHERE runs.status != 'running'
+  AND instr(lower(runs.combined_log), lower(?1)) > 0
+ORDER BY runs.started_at DESC LIMIT ?2
+`
+
+type SearchRunLogsParams struct {
+	Query    string
+	RowLimit int64
+}
+
+type SearchRunLogsRow struct {
+	Run     Run
+	JobName string
+}
+
+func (q *Queries) SearchRunLogs(ctx context.Context, arg SearchRunLogsParams) ([]SearchRunLogsRow, error) {
+	rows, err := q.db.QueryContext(ctx, searchRunLogs, arg.Query, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SearchRunLogsRow
+	for rows.Next() {
+		var i SearchRunLogsRow
+		if err := rows.Scan(
+			&i.Run.ID,
+			&i.Run.JobID,
+			&i.Run.StartedAt,
+			&i.Run.EndedAt,
+			&i.Run.DurationMs,
+			&i.Run.Status,
+			&i.Run.ExitCode,
+			&i.Run.Stdout,
+			&i.Run.Stderr,
+			&i.Run.CombinedLog,
+			&i.Run.Truncated,
+			&i.Run.CreatedAt,
+			&i.Run.Pid,
+			&i.Run.Host,
+			&i.JobName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

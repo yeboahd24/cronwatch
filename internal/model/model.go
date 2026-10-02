@@ -36,4 +36,6 @@ type JobView struct {
 	Status         string
 	LastRun        *Run
 	NextExpectedAt *time.Time
+	// MissedAt is the latest missed occurrence while Status is "missed".
+	MissedAt *time.Time
 }

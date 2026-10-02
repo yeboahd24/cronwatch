@@ -35,7 +35,7 @@ func TestPagesEscapeLogsAndSetSecurityHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"/healthz", "/", "/jobs/" + job.ID, "/runs/" + run.ID, "/runs", "/static/app.css"} {
+	for _, path := range []string{"/healthz", "/", "/jobs/" + job.ID, "/runs/" + run.ID, "/runs", "/logs", "/logs?q=script&errors=1", "/partials/dashboard", "/static/app.css", "/static/favicon.svg"} {
 		recorder := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		req.Host = "localhost:8765"
@@ -83,5 +83,89 @@ func TestRejectsNonLoopbackHost(t *testing.T) {
 		if recorder.Code != tc.want {
 			t.Fatalf("%s (anyHost=%v): status %d", tc.host, tc.anyHost, recorder.Code)
 		}
+	}
+}
+
+// get serves path from a server over a fresh store and returns the body.
+func get(t *testing.T, server *Server, path string) string {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	req.Host = "localhost:8765"
+	recorder := httptest.NewRecorder()
+	server.Router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("%s: status %d", path, recorder.Code)
+	}
+	return recorder.Body.String()
+}
+
+func TestDashboardAndLogPages(t *testing.T) {
+	ctx := context.Background()
+	s, err := storage.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	expr, grace := "", time.Duration(0)
+	failing, err := s.UpsertJob(ctx, storage.JobSpec{Slug: "reports", Name: "Generate Reports", Command: `"sh" "-c" "exit 2"`, Schedule: &expr, Grace: &grace})
+	if err != nil {
+		t.Fatal(err)
+	}
+	healthy, err := s.UpsertJob(ctx, storage.JobSpec{Slug: "backup", Name: "Database Backup", Command: `"backup.sh"`, Schedule: &expr, Grace: &grace})
+	if err != nil {
+		t.Fatal(err)
+	}
+	two, zero := 2, 0
+	failRun, err := s.CreateRun(ctx, failing.ID, time.Now().Add(-time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	combined := "loading config\n\x02report job failed: connection refused\n"
+	if err := s.FinishRun(ctx, failRun.ID, time.Now(), time.Second, "failed", &two, "loading config\n", "report job failed: connection refused\n", combined, false); err != nil {
+		t.Fatal(err)
+	}
+	okRun, err := s.CreateRun(ctx, healthy.ID, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.FinishRun(ctx, okRun.ID, time.Now(), time.Second, "success", &zero, "done\n", "", "done\n", false); err != nil {
+		t.Fatal(err)
+	}
+	server, err := New(s, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The failing job's run is featured even though a newer run succeeded.
+	index := get(t, server, "/")
+	for _, want := range []string{">Failed<", ">Success<", `id="recent-logs"`, "Generate Reports · ", `class="log-line is-stderr"`, "report job failed: connection refused"} {
+		if !strings.Contains(index, want) {
+			t.Fatalf("dashboard missing %q", want)
+		}
+	}
+
+	// The live partial must keep its tbody inside a table, or DOMParser drops it.
+	partial := get(t, server, "/partials/dashboard")
+	if !strings.HasPrefix(partial, `<table><tbody id="jobs-body">`) || !strings.Contains(partial, `id="recent-logs"`) {
+		t.Fatalf("partial = %.120s", partial)
+	}
+
+	run := get(t, server, "/runs/"+failRun.ID)
+	if !strings.Contains(run, "Last error") || !strings.Contains(run, "report job failed") {
+		t.Fatal("run page missing last error")
+	}
+	if stdout := get(t, server, "/runs/"+failRun.ID+"?stream=stdout"); strings.Contains(stdout, "is-stderr") || !strings.Contains(stdout, "loading config") {
+		t.Fatal("stdout stream shows stderr lines")
+	}
+	if job := get(t, server, "/jobs/"+failing.ID); !strings.Contains(job, "sh -c &#39;exit 2&#39;") {
+		t.Fatal("job page command not shell-quoted")
+	}
+
+	logsPage := get(t, server, "/logs?q=REFUSED")
+	if !strings.Contains(logsPage, "connection refused") || strings.Contains(logsPage, "Database Backup") {
+		t.Fatal("log search returned wrong runs")
+	}
+	if errorsOnly := get(t, server, "/logs?errors=1"); strings.Contains(errorsOnly, "loading config") || !strings.Contains(errorsOnly, "connection refused") {
+		t.Fatal("errors-only filter kept stdout lines")
 	}
 }

@@ -1,0 +1,45 @@
+{{define "head"}}<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{{.Title}} · CronWatch</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<main class="shell">
+  <header class="masthead">
+    <a class="brand" href="/">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9.5"/><path d="M12 6.5V12l3.5 2.5"/></svg>
+      <span class="brand-text">
+        <span class="brand-name">CronWatch</span>
+        <span class="brand-tag">Local web UI for scheduled jobs</span>
+      </span>
+    </a>
+    <span class="local-badge" title="Served from this machine; not reachable from other hosts unless --public">LOCAL</span>
+  </header>
+  <nav class="tabs" aria-label="Sections">
+    <a href="/"{{if eq .Tab "jobs"}} aria-current="page"{{end}}>Jobs</a>
+    <a href="/runs"{{if eq .Tab "runs"}} aria-current="page"{{end}}>Runs</a>
+    <a href="/logs"{{if eq .Tab "logs"}} aria-current="page"{{end}}>Logs</a>
+  </nav>
+{{end}}
+
+{{define "foot"}}
+</main>
+<script src="/static/app.js" defer></script>
+</body>
+</html>
+{{end}}
+
+{{define "status"}}<span class="status status-{{.}}">{{status .}}</span>{{end}}
+
+{{define "time"}}<time datetime="{{iso .}}" title="{{full .}}">{{when .}}</time>{{end}}
+
+{{define "loglines"}}<ol class="log-lines">
+{{- range .}}
+{{- if .IsTruncated}}<li class="log-gap">{{.Text}}</li>
+{{- else}}<li class="log-line{{if .IsStderr}} is-stderr{{end}}"><span class="ln" aria-hidden="true">{{.Number}}</span><span class="lt">{{.Text}}</span></li>
+{{- end}}
+{{- end}}</ol>{{end}}

@@ -34,3 +34,10 @@ DELETE FROM runs WHERE status != 'running' AND started_at < COALESCE((
     WHERE kept.job_id = runs.job_id
     ORDER BY kept.started_at DESC LIMIT 1 OFFSET ?
 ), '');
+
+-- name: SearchRunLogs :many
+SELECT sqlc.embed(runs), jobs.name AS job_name
+FROM runs JOIN jobs ON jobs.id = runs.job_id
+WHERE runs.status != 'running'
+  AND instr(lower(runs.combined_log), lower(sqlc.arg(query))) > 0
+ORDER BY runs.started_at DESC LIMIT sqlc.arg(row_limit);
