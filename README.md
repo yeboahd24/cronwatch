@@ -7,6 +7,8 @@ database. A small web dashboard shows job status, run history, duration, and
 captured logs. It ships as one Go binary and needs no account or daemon to
 record runs.
 
+![CronWatch records cron jobs on a remote server; an SSH tunnel (ssh -L 8765:localhost:8765) brings its local dashboard to your browser at localhost:8765, showing each job's status, last run, duration, and logs.](docs/images/cronwatch-overview.png)
+
 [Install](#install) · [Quick start](#quick-start) · [CLI](#cli) · [Development](#development)
 
 ## Highlights
