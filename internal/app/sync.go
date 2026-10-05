@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"strings"
@@ -55,9 +56,7 @@ func shellEnv(assignments map[string]string) map[string]string {
 			env[name] = v
 		}
 	}
-	for k, v := range assignments {
-		env[k] = v
-	}
+	maps.Copy(env, assignments)
 	return env
 }
 

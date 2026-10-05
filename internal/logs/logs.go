@@ -5,6 +5,7 @@ package logs
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -87,9 +88,9 @@ func Tail(lines []Line, n int) []Line {
 
 // LastError returns the last non-blank stderr line, if any.
 func LastError(lines []Line) string {
-	for i := len(lines) - 1; i >= 0; i-- {
-		if lines[i].IsStderr() && strings.TrimSpace(lines[i].Text) != "" {
-			return lines[i].Text
+	for _, line := range slices.Backward(lines) {
+		if line.IsStderr() && strings.TrimSpace(line.Text) != "" {
+			return line.Text
 		}
 	}
 	return ""
