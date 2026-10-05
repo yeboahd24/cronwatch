@@ -56,7 +56,7 @@ func convertJob(row db.Job) (model.Job, error) {
 }
 func convertRun(row db.Run) (model.Run, error) {
 	r := model.Run{ID: row.ID, JobID: row.JobID, Status: row.Status, Stdout: row.Stdout, Stderr: row.Stderr, CombinedLog: row.CombinedLog, Truncated: row.Truncated != 0, EnvHash: row.EnvHash.String,
-		Reason: row.Reason.String, OverlappedRunID: row.OverlappedRunID.String}
+		Reason: row.Reason.String, OverlappedRunID: row.OverlappedRunID.String, FailureSignature: row.FailureSignature.String}
 	if row.MaxRssKb.Valid {
 		r.Usage = &model.Usage{MaxRSSKB: row.MaxRssKb.Int64, UserCPUMS: row.UserCpuMs.Int64, SysCPUMS: row.SysCpuMs.Int64}
 	}
@@ -214,6 +214,9 @@ func (s *Store) CompleteRun(ctx context.Context, id string, c Completion) error 
 		DurationMs: sql.NullInt64{Int64: c.Duration.Milliseconds(), Valid: true}, Status: c.Status, ExitCode: code,
 		Stdout: c.Stdout, Stderr: c.Stderr, CombinedLog: c.Combined, Truncated: truncatedInt,
 		Reason: sql.NullString{String: c.Reason, Valid: c.Reason != ""}}
+	if model.Failing(c.Status) {
+		params.FailureSignature = sql.NullString{String: logs.FailureSignature(c.Status, c.Stderr, c.Stdout, c.ExitCode), Valid: true}
+	}
 	if u := c.Usage; u != nil {
 		params.MaxRssKb = sql.NullInt64{Int64: u.MaxRSSKB, Valid: true}
 		params.UserCpuMs = sql.NullInt64{Int64: u.UserCPUMS, Valid: true}

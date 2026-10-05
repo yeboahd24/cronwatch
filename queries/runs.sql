@@ -5,7 +5,7 @@ VALUES (?, ?, ?, 'running', ?, ?, ?);
 -- name: FinishRun :execrows
 UPDATE runs SET ended_at = ?, duration_ms = ?, status = ?, exit_code = ?,
     stdout = ?, stderr = ?, combined_log = ?, truncated = ?, reason = ?,
-    max_rss_kb = ?, user_cpu_ms = ?, sys_cpu_ms = ?
+    max_rss_kb = ?, user_cpu_ms = ?, sys_cpu_ms = ?, failure_signature = ?
 WHERE id = ? AND status = 'running';
 
 -- name: CountRunsSince :many
@@ -81,3 +81,27 @@ ORDER BY started_at;
 -- name: LastSuccessBefore :one
 SELECT * FROM runs WHERE job_id = ? AND status = 'success' AND started_at < ?
 ORDER BY started_at DESC LIMIT 1;
+
+-- name: FailureHistoryBefore :one
+-- How many earlier runs of the job failed the same way, and when the first did.
+SELECT count(*) AS runs, CAST(coalesce(min(started_at), '') AS TEXT) AS first_seen
+FROM runs WHERE job_id = ? AND failure_signature = ? AND started_at < ?;
+
+-- name: ListFailureGroups :many
+-- The job's distinct failure signatures, most recent first, with the newest
+-- run of each.
+SELECT g.failure_signature, count(*) AS runs, CAST(min(g.started_at) AS TEXT) AS first_seen,
+    CAST(max(g.started_at) AS TEXT) AS last_seen,
+    CAST((SELECT latest.id FROM runs AS latest WHERE latest.job_id = g.job_id
+        AND latest.failure_signature = g.failure_signature
+        ORDER BY latest.started_at DESC LIMIT 1) AS TEXT) AS latest_run_id
+FROM runs AS g WHERE g.job_id = ? AND g.failure_signature IS NOT NULL
+GROUP BY g.failure_signature ORDER BY last_seen DESC LIMIT ?;
+
+-- name: ListUnsignedFailures :many
+SELECT id, status, exit_code, stdout, stderr, reason FROM runs
+WHERE failure_signature IS NULL AND status IN ('failed', 'timeout')
+LIMIT ?;
+
+-- name: SetFailureSignature :exec
+UPDATE runs SET failure_signature = ? WHERE id = ?;

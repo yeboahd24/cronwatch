@@ -400,3 +400,60 @@ func TestRunPageComparesWithLastSuccess(t *testing.T) {
 		t.Fatal("lines that differ only in dates or numbers were reported")
 	}
 }
+
+func TestFailureHistoryOnRunAndJobPages(t *testing.T) {
+	ctx := context.Background()
+	s, err := storage.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	job, err := s.UpsertJob(ctx, storage.JobSpec{Slug: "backup", Name: "Backup", Command: `"true"`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	one := 1
+	var ids []string
+	for i, stderr := range []string{"[Fri] ssh: connect to host api port 22: Connection timed out\n", "[Sat] ssh: connect to host api port 22: Connection timed out\n", "pg_dump: command not found\n", ""} {
+		run, err := s.CreateRun(ctx, job.ID, time.Now().Add(time.Duration(i-4)*time.Hour))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.CompleteRun(ctx, run.ID, storage.Completion{Ended: run.StartedAt, Status: "failed", ExitCode: &one, Stderr: stderr}); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, run.ID)
+	}
+	server, err := New(s, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	get := func(path string) string {
+		recorder := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Host = "localhost:8765"
+		server.Router.ServeHTTP(recorder, req)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("%s: status %d", path, recorder.Code)
+		}
+		return recorder.Body.String()
+	}
+	for path, want := range map[string]string{
+		"/runs/" + ids[0]: `<span class="badge badge-new">New error</span> The first time this job failed this way.`,
+		"/runs/" + ids[1]: `<span class="badge">Seen before</span> Same error as 1 earlier run, first seen`,
+		"/runs/" + ids[2]: `New error`,
+	} {
+		if body := get(path); !strings.Contains(body, want) || !strings.Contains(body, `href="/jobs/`+job.ID+`#failures"`) {
+			t.Fatalf("%s lacks %q", path, want)
+		}
+	}
+	page := get("/jobs/" + job.ID)
+	for _, want := range []string{`<h2 id="failures">Failure types</h2>`,
+		`<code>Exited 1 with no output</code>`, `<code>pg_dump: command not found</code>`,
+		`<code>[Sat] ssh: connect to host api port 22: Connection timed out</code></td>
+      <td data-label="Runs">2</td>`} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("job page lacks %q:\n%s", want, page)
+		}
+	}
+}

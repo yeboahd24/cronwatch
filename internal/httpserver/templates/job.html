@@ -14,6 +14,24 @@
     {{if .View.MissedAt}}<dt>Missed</dt><dd class="text-warning">Expected {{template "time" .View.MissedAt}}, no run started</dd>{{end}}
   </dl>
 </section>
+{{if .Failures}}
+<h2 id="failures">Failure types</h2>
+<section class="panel table-wrap">
+  <table>
+    <thead><tr><th scope="col">Error</th><th scope="col">Runs</th><th scope="col">First seen</th><th scope="col">Last seen</th></tr></thead>
+    <tbody>
+    {{- range .Failures}}
+    <tr>
+      <td data-label="Error" class="cell-error"><code>{{failure .Latest}}</code>{{if eq .Latest.Status "timeout"}}<small>Timed out</small>{{end}}</td>
+      <td data-label="Runs">{{.Runs}}</td>
+      <td data-label="First seen">{{template "time" .FirstSeen}}</td>
+      <td data-label="Last seen"><a href="/runs/{{.Latest.ID}}">{{template "time" .LastSeen}}</a></td>
+    </tr>
+    {{- end}}
+    </tbody>
+  </table>
+</section>
+{{end}}
 <h2>Recent runs</h2>
 <section class="panel table-wrap">
   <table>

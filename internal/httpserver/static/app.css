@@ -362,6 +362,17 @@ code, pre { font-family: var(--mono); font-size: 13px; }
 .more a { color: var(--muted); }
 .more a:hover { color: var(--success); }
 
+/* Failure history */
+
+.failure-history { margin: 10px 0 0; color: var(--muted); font-size: 14px; }
+.failure-history .badge { margin-right: 6px; }
+.failure-history a { margin-left: 6px; }
+.failure-history a { color: var(--muted); }
+.failure-history a:hover { color: var(--success); }
+.badge { display: inline-block; padding: 1px 8px; border: 1px solid var(--border); border-radius: 999px; color: var(--text); font-size: 12px; font-weight: 600; }
+.badge-new { border-color: var(--danger); color: var(--danger); }
+.cell-error code { overflow-wrap: anywhere; color: var(--log-text); }
+
 /* Comparison with the last success */
 
 .compare-intro { color: var(--muted); margin: 12px 0 14px; }
@@ -417,6 +428,8 @@ code, pre { font-family: var(--mono); font-size: 13px; }
   td.cell-job { display: block; text-align: left; padding-bottom: 6px; }
   td.cell-job::before { content: none; }
   td.cell-job a { font-size: 16px; }
+  td.cell-error { display: block; text-align: left; padding-bottom: 6px; }
+  td.cell-error::before { content: none; }
   td.cell-status { flex-wrap: wrap; column-gap: 8px; }
   td.cell-status::before { margin-right: auto; }
   td.cell-status small { margin-top: 0; align-self: center; }

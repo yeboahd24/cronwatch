@@ -42,6 +42,9 @@ type Run struct {
 	// when this one started.
 	OverlappedRunID string
 	Usage           *Usage // nil when not measured
+	// FailureSignature groups failed runs that failed the same way; empty
+	// for runs that did not fail.
+	FailureSignature string
 }
 
 // Usage is the resources a run's command used.

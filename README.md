@@ -83,6 +83,12 @@ jobs and logs; it cannot execute commands.
   missing, and how the exit code and duration changed. Lines are matched
   ignoring numbers, times, IDs and `/tmp` paths, so a changed date or size is
   not reported as a difference.
+- **Failure types.** Failed runs that end with the same error are grouped, by
+  their last few stderr lines (or output, if stderr is empty) with numbers,
+  times, IDs and `/tmp` paths ignored. A failed run's page says whether its
+  error is **new** or how many earlier runs failed the same way and when it
+  was first seen; a job's page lists each failure type with its count, first
+  and last time.
 - **Logs** searches the output of the last 50 runs; **Errors only** limits
   results to stderr lines.
 - **Timeline** shows every job's runs over the last 24 hours or 7 days, one row

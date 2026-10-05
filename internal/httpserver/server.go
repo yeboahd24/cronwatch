@@ -84,6 +84,7 @@ func New(store *storage.Store, opts Options) (*Server, error) {
 		"join":    strings.Join,
 		"kb":      humanKB,
 		"add":     func(a, b int) int { return a + b },
+		"failure": failureSummary,
 		"ms":      func(ms int64) string { return humanDuration(time.Duration(ms) * time.Millisecond) },
 	}
 	t, err := template.New("").Funcs(funcs).ParseFS(assets, "templates/*.html")
@@ -202,10 +203,37 @@ func (s *Server) handleJob(w http.ResponseWriter, r *http.Request) {
 		queryError(w, err)
 		return
 	}
+	groups, err := s.Store.FailureGroups(r.Context(), job.ID, failureGroupLimit)
+	if err != nil {
+		queryError(w, err)
+		return
+	}
 	s.render(w, "job.html", page{Title: job.Name, Tab: "jobs", Data: struct {
-		View model.JobView
-		Runs []model.Run
-	}{view, runs}})
+		View     model.JobView
+		Runs     []model.Run
+		Failures []storage.FailureGroup
+	}{view, runs, groups}})
+}
+
+// failureGroupLimit caps the Failure types table on a job page.
+const failureGroupLimit = 10
+
+// failureSummary is the line that best describes how a run failed: its last
+// error, else why a rule failed it, else its last output, else its exit code.
+func failureSummary(r model.Run) string {
+	if line := logs.LastError(logs.ParseAs(r.Stderr, logs.Stderr)); line != "" {
+		return line
+	}
+	if r.Reason != "" {
+		return r.Reason
+	}
+	if lines := logs.Parse(r.Stdout); len(lines) > 0 {
+		return lines[len(lines)-1].Text
+	}
+	if r.ExitCode != nil {
+		return fmt.Sprintf("Exited %d with no output", *r.ExitCode)
+	}
+	return statusLabel(r.Status)
 }
 
 func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
@@ -251,6 +279,15 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 		queryError(w, err)
 		return
 	}
+	var history *storage.FailureHistory
+	if run.FailureSignature != "" {
+		h, err := s.Store.FailureHistoryBefore(r.Context(), run)
+		if err != nil {
+			queryError(w, err)
+			return
+		}
+		history = &h
+	}
 	s.render(w, "run.html", page{Title: "Run · " + job.Name, Tab: "runs", Data: struct {
 		Run         model.Run
 		Job         model.Job
@@ -260,7 +297,8 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 		Env         *runEnv
 		LastSuccess *model.Run
 		Compare     *logCompare
-	}{run, job, stream, lines, logs.LastError(stderr), env, success, compare}})
+		History     *storage.FailureHistory
+	}{run, job, stream, lines, logs.LastError(stderr), env, success, compare, history}})
 }
 
 // compareLines caps each list on the comparison view; logs can be long.

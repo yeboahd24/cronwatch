@@ -138,6 +138,10 @@ func maintain(ctx context.Context, s *storage.Store, stderr io.Writer) error {
 	if _, err := s.ReapAbandonedRuns(ctx); err != nil {
 		return fmt.Errorf("reap abandoned runs: %w", err)
 	}
+	// Failures recorded before signatures existed are signed a batch at a time.
+	if _, err := s.BackfillFailureSignatures(ctx, 500); err != nil {
+		return fmt.Errorf("sign earlier failures: %w", err)
+	}
 	missed, err := s.DetectMissedJobs(ctx, time.Now())
 	notifyMissed(ctx, s, missed, stderr)
 	if err != nil {

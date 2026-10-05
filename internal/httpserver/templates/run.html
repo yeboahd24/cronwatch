@@ -7,6 +7,7 @@
 </div>
 {{if and .Run.Reason (ne .Run.Status "success")}}<div class="error-callout{{if eq .Run.Status "skipped"}} is-muted{{end}}" role="note"><span class="error-label">{{status .Run.Status}}</span><span>{{.Run.Reason}}</span></div>
 {{else if .LastError}}<div class="error-callout" role="note"><span class="error-label">Last error</span><code>{{.LastError}}</code></div>{{end}}
+{{with .History}}<p class="failure-history">{{if .Earlier}}<span class="badge">Seen before</span> Same error as {{.Earlier}} earlier {{if eq .Earlier 1}}run{{else}}runs{{end}}, first seen {{template "time" .FirstSeen}}.{{else}}<span class="badge badge-new">New error</span> The first time this job failed this way.{{end}} <a href="/jobs/{{$.Data.Job.ID}}#failures">All failure types</a></p>{{end}}
 {{with .Env}}{{with .Changed}}<div class="env-callout" role="note">
   <p class="env-callout-title">Environment changed since the <a href="/runs/{{.Since.ID}}">last successful run</a> {{template "time" .Since.StartedAt}}</p>
   <ul>
