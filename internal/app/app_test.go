@@ -173,7 +173,7 @@ func TestHelpForEveryCommand(t *testing.T) {
 	for _, args := range [][]string{
 		{"run", "--help"}, {"run", "-h", "--", "true"}, {"serve", "--help"}, {"jobs", "-h"},
 		{"runs", "--help"}, {"prune", "--help"}, {"sync", "--help"}, {"help", "run"},
-		{"envdiff", "--help"}, {"try", "-h"}, {"digest", "--help"},
+		{"envdiff", "--help"}, {"try", "-h"}, {"digest", "--help"}, {"crontab-history", "-h"},
 	} {
 		var out bytes.Buffer
 		if err := Run(context.Background(), args, &out, &bytes.Buffer{}); err != nil {

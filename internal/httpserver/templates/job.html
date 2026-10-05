@@ -40,6 +40,20 @@
   </table>
 </section>
 {{end}}
+{{if .Crontab}}
+<h2 id="crontab-history">Crontab history</h2>
+<section class="panel history">
+  <ul>
+  {{- range .Crontab}}
+    <li>{{template "time" .TakenAt}}
+      {{- if eq .Kind "schedule"}} Schedule changed from <code>{{.Before}}</code> to <code>{{.After}}</code>
+      {{- else if eq .Kind "added"}} Added to the crontab: <code>{{.After}}</code>
+      {{- else if eq .Kind "removed"}} <span class="text-warning">Removed from the crontab</span>, was <code>{{.Before}}</code>
+      {{- else}} Line changed from <code>{{.Before}}</code> to <code>{{.After}}</code>{{end}}</li>
+  {{- end}}
+  </ul>
+</section>
+{{end}}
 <h2>Recent runs</h2>
 <section class="panel table-wrap">
   <table>

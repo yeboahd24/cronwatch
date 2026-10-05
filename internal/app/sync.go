@@ -41,10 +41,11 @@ func readUserCrontab(ctx context.Context) (string, error) {
 
 // syncResult describes what syncCrontab did.
 type syncResult struct {
-	Jobs           int             // cronwatch run lines registered (new, updated or unchanged)
-	Added, Updated []string        // job names
-	Unmonitored    []crontab.Entry // lines that do not use cronwatch
-	Problems       []string        // lines that use cronwatch run but could not be read
+	Jobs           int                     // cronwatch run lines registered (new, updated or unchanged)
+	Added, Updated []string                // job names
+	Unmonitored    []crontab.Entry         // lines that do not use cronwatch
+	Problems       []string                // lines that use cronwatch run but could not be read
+	Changes        []storage.CrontabChange // since the last recorded crontab
 }
 
 // shellEnv is the environment used to expand $VAR in crontab commands: the
@@ -194,6 +195,12 @@ func syncCommand(ctx context.Context, args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	// Only your real crontab has a history; a file may be a draft.
+	if *file == "" {
+		if result.Changes, err = recordCrontab(ctx, s, text, time.Now()); err != nil {
+			return err
+		}
+	}
 	printSyncResult(stdout, result)
 	return nil
 }
@@ -241,6 +248,12 @@ func printSyncResult(w io.Writer, r syncResult) {
 		fmt.Fprintf(w, "\nNot monitored (%s without cronwatch run):\n", plural(len(r.Unmonitored), "line", "lines"))
 		for _, e := range r.Unmonitored {
 			fmt.Fprintf(w, "  line %d: %s %s\n", e.Line, e.Raw, e.Command)
+		}
+	}
+	if len(r.Changes) > 0 {
+		fmt.Fprintf(w, "\nChanged since the crontab was last recorded:\n")
+		for _, c := range r.Changes {
+			fmt.Fprintf(w, "  %s\n", describeChange(c, nil))
 		}
 	}
 }

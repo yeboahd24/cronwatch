@@ -109,6 +109,9 @@ func maintenanceLoop(ctx context.Context, done <-chan struct{}, s *storage.Store
 				for _, name := range result.Updated {
 					fmt.Fprintf(stderr, "crontab sync: updated %s\n", name)
 				}
+				if n := len(result.Changes); n > 0 {
+					fmt.Fprintf(stderr, "crontab history: recorded %s\n", plural(n, "change", "changes"))
+				}
 				// Report unreadable lines when they change, not every minute.
 				if problems := strings.Join(result.Problems, "; "); problems != lastProblems {
 					if problems != "" {
@@ -155,5 +158,10 @@ func syncFromUserCrontab(ctx context.Context, s *storage.Store) (syncResult, err
 	if err != nil {
 		return syncResult{}, err
 	}
-	return syncCrontab(ctx, s, text)
+	result, err := syncCrontab(ctx, s, text)
+	if err != nil {
+		return result, err
+	}
+	result.Changes, err = recordCrontab(ctx, s, text, time.Now())
+	return result, err
 }

@@ -517,3 +517,49 @@ func TestSlowRunsAndDrift(t *testing.T) {
 		}
 	}
 }
+
+func TestCrontabHistoryOnJobPageAndTimeline(t *testing.T) {
+	ctx := context.Background()
+	s, err := storage.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	expr := "0 3 * * *"
+	job, err := s.UpsertJob(ctx, storage.JobSpec{Slug: "backup", Name: "Backup", Command: `"true"`, Schedule: &expr})
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := time.Now().Add(-2 * time.Hour)
+	if err := s.RecordCrontabSnapshot(ctx, storage.CrontabSnapshot{TakenAt: changed, Hash: "h2", Content: "x"}, []storage.CrontabChange{
+		{JobSlug: "backup", Kind: "schedule", Before: "0 2 * * *", After: "0 3 * * *"},
+		{Kind: "line_added", After: "MAILTO=me@example.com"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	server, err := New(s, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	get := func(path string) string {
+		recorder := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Host = "localhost:8765"
+		server.Router.ServeHTTP(recorder, req)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("%s: status %d", path, recorder.Code)
+		}
+		return recorder.Body.String()
+	}
+	page := get("/jobs/" + job.ID)
+	if !strings.Contains(page, `<h2 id="crontab-history">Crontab history</h2>`) ||
+		!strings.Contains(page, "Schedule changed from <code>0 2 * * *</code> to <code>0 3 * * *</code>") ||
+		strings.Contains(page, "MAILTO") {
+		t.Fatalf("job page:\n%s", page)
+	}
+	timeline := get("/timeline")
+	if !strings.Contains(timeline, `<a href="/jobs/`+job.ID+`#crontab-history"><title>Crontab changed · `) ||
+		!strings.Contains(timeline, " · schedule 0 2 * * * → 0 3 * * *</title>") {
+		t.Fatalf("timeline lacks the change marker:\n%s", timeline)
+	}
+}

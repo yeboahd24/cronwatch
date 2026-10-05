@@ -226,16 +226,26 @@ func (s *Server) handleJob(w http.ResponseWriter, r *http.Request) {
 		queryError(w, err)
 		return
 	}
+	history, err := s.Store.JobCrontabChanges(r.Context(), job.Slug, crontabHistoryLimit)
+	if err != nil {
+		queryError(w, err)
+		return
+	}
 	s.render(w, "job.html", page{Title: job.Name, Tab: "jobs", Data: struct {
 		View     model.JobView
 		Runs     []model.Run
 		Failures []storage.FailureGroup
 		Trend    *jobTrend
-	}{view, runs, groups, newJobTrend(trend, job.Name)}})
+		Crontab  []storage.CrontabChange
+	}{view, runs, groups, newJobTrend(trend, job.Name), history}})
 }
 
-// failureGroupLimit caps the Failure types table on a job page.
-const failureGroupLimit = 10
+// failureGroupLimit caps the Failure types table on a job page, and
+// crontabHistoryLimit its Crontab history.
+const (
+	failureGroupLimit   = 10
+	crontabHistoryLimit = 10
+)
 
 // failureSummary is the line that best describes how a run failed: its last
 // error, else why a rule failed it, else its last output, else its exit code.

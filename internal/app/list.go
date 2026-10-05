@@ -123,7 +123,7 @@ func pruneCommand(ctx context.Context, args []string, stdout io.Writer) error {
 		"Delete finished runs beyond the newest N per job and/or older than a duration. Running runs are kept.")
 	dir := fs.String("data-dir", "", "data directory")
 	keep := fs.Int("keep", 0, "finished runs to keep per job (0 = no limit)")
-	olderThan := fs.Duration("older-than", 0, "delete runs and missed occurrences older than this, e.g. 720h (0 = no limit)")
+	olderThan := fs.Duration("older-than", 0, "delete runs, missed occurrences and crontab history older than this, e.g. 720h (0 = no limit)")
 	if err := parseFlags(fs, args, stdout); err != nil {
 		return err
 	}
@@ -149,6 +149,10 @@ func pruneCommand(ctx context.Context, args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "Deleted %d runs and %d missed occurrences.\n", result.Runs, result.MissedOccurrences)
+	fmt.Fprintf(stdout, "Deleted %d runs and %d missed occurrences", result.Runs, result.MissedOccurrences)
+	if result.CrontabSnapshots > 0 {
+		fmt.Fprintf(stdout, ", and %s", plural(int(result.CrontabSnapshots), "crontab snapshot", "crontab snapshots"))
+	}
+	fmt.Fprintln(stdout, ".")
 	return nil
 }

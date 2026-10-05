@@ -39,6 +39,7 @@ type timelineTick struct {
 type timelineLane struct {
 	Job      model.JobView
 	Expected []string // positions of expected runs
+	Changes  []timelineChange
 	Marks    []timelineMark
 	Summary  string // for screen readers
 }
@@ -53,6 +54,12 @@ type timelineMark struct {
 	Title    string
 	Href     string
 	Overlaps bool // started while an earlier run was still running
+}
+
+// timelineChange marks when the job's crontab line changed.
+type timelineChange struct {
+	X     string
+	Title string
 }
 
 func markKind(status string) string {
@@ -91,6 +98,11 @@ func (s *Server) handleTimeline(w http.ResponseWriter, r *http.Request) {
 		queryError(w, err)
 		return
 	}
+	crontabChanges, err := s.Store.JobCrontabChangesSince(r.Context(), from)
+	if err != nil {
+		queryError(w, err)
+		return
+	}
 
 	pct := func(t time.Time) float64 {
 		p := float64(t.Sub(from)) / float64(window) * 100
@@ -123,6 +135,15 @@ func (s *Server) handleTimeline(w http.ResponseWriter, r *http.Request) {
 				}
 				lane.Expected = expected
 			}
+		}
+		for _, c := range crontabChanges[job.Slug] {
+			title := "Crontab changed · " + c.TakenAt.Local().Format("Jan 2 15:04")
+			if c.Kind == "schedule" {
+				title += " · schedule " + c.Before + " → " + c.After
+			} else {
+				title += " · line " + c.Kind
+			}
+			lane.Changes = append(lane.Changes, timelineChange{X: format(pct(c.TakenAt)), Title: title})
 		}
 		counts := map[string]int{}
 		for _, run := range byJob[job.ID] {

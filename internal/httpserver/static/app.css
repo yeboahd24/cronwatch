@@ -382,6 +382,14 @@ code, pre { font-family: var(--mono); font-size: 13px; }
 .key-fail { background: var(--danger); }
 .badge-slow { border-color: var(--warning); color: var(--warning); font-weight: 600; }
 
+/* Crontab history */
+
+.history ul { list-style: none; margin: 0; padding: 6px 20px; }
+.history li { padding: 10px 0; overflow-wrap: anywhere; }
+.history li + li { border-top: 1px solid var(--border); }
+.history time { display: inline-block; min-width: 110px; color: var(--muted); }
+.history code { color: var(--log-text); }
+
 /* Failure history */
 
 .failure-history { margin: 10px 0 0; color: var(--muted); font-size: 14px; }
@@ -424,6 +432,7 @@ code, pre { font-family: var(--mono); font-size: 13px; }
 .tl-minor { fill: var(--muted); }
 .tl-missed { fill: none; stroke: var(--warning); stroke-width: 1.5; stroke-dasharray: 3 2; }
 .tl-overlap { stroke: var(--warning); stroke-width: 1.5; }
+.tl-change { stroke: var(--text); stroke-width: 2; stroke-dasharray: 2 2; }
 .tl-track a:hover rect:not(.tl-hit), .tl-track a:focus-visible rect:not(.tl-hit) { stroke: var(--text); stroke-width: 1.5; }
 .tl-note { font-size: 13px; margin: 10px 0 0; }
 

@@ -8,6 +8,23 @@ import (
 	"database/sql"
 )
 
+type CrontabChange struct {
+	ID         string
+	SnapshotID string
+	TakenAt    string
+	JobSlug    sql.NullString
+	Kind       string
+	BeforeText string
+	AfterText  string
+}
+
+type CrontabSnapshot struct {
+	ID          string
+	TakenAt     string
+	ContentHash string
+	Content     string
+}
+
 type Environment struct {
 	Hash      string
 	Data      string

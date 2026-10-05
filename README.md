@@ -172,6 +172,7 @@ database. A user-level systemd service example is in
 | [`cronwatch envdiff`](#cronwatch-envdiff) | Compare a run's environment with your shell |
 | [`cronwatch try`](#cronwatch-try) | Rerun a job in the environment cron gave it |
 | [`cronwatch digest`](#cronwatch-digest) | Summarize every job, for a daily email |
+| [`cronwatch crontab-history`](#cronwatch-crontab-history) | List changes to your crontab |
 | [`cronwatch prune`](#cronwatch-prune) | Delete old finished runs |
 | [`cronwatch version`](#cronwatch-version) | Print the version |
 
@@ -467,6 +468,37 @@ MAILTO=you@example.com
 0 8 * * * $HOME/.local/bin/cronwatch digest --quiet
 ```
 
+### `cronwatch crontab-history`
+
+```sh
+cronwatch crontab-history [--limit N] [JOB-SLUG]
+```
+
+Lists changes to your crontab, newest first, optionally for one job. `cronwatch
+serve` checks your crontab every minute and `cronwatch sync` checks it when you
+run it; each time it has changed, CronWatch keeps a copy and records what
+changed:
+
+```console
+$ cronwatch crontab-history
+2026-10-05 09:12
+  Database Backup: schedule changed from 0 2 * * * to 0 3 * * *
+  + MAILTO=you@example.com
+
+2026-10-04 18:40
+  Ingest queue: removed from the crontab (was: */5 * * * * $CW run --name "Ingest queue" -- ./ingest.sh)
+```
+
+A job's page shows its own changes under **Crontab history**, and the
+Timeline marks them, so a schedule change sits next to the gap it caused.
+
+The copies are stored in the database, so treat them like the logs. Values of
+variables whose names look secret (containing `KEY`, `TOKEN`, `SECRET`,
+`PASS`, `AUTH` and similar) are replaced by a short hash: a changed secret is
+still noticed, but never stored. Secrets written inside commands are stored as
+written. `sync --crontab FILE` registers jobs from the file without recording
+it, and `prune --older-than` deletes old copies but always keeps the newest.
+
 ### `cronwatch prune`
 
 ```sh
@@ -502,7 +534,8 @@ Hooks come from the line's flags, or else from `CRONWATCH_ON_FAILURE` and
 
 Run `cronwatch sync` to do the same by hand. It also lists crontab lines that
 are not wrapped with `cronwatch run`, so you can see what is not monitored.
-Pass `--sync-crontab=false` to `serve` to turn this off.
+Pass `--sync-crontab=false` to `serve` to turn this off, along with
+[crontab history](#cronwatch-crontab-history).
 
 ## Retention
 
