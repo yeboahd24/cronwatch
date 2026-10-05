@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"text/tabwriter"
 	"time"
 
@@ -24,7 +25,7 @@ func openForList(ctx context.Context, dir string) (*storage.Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := maintain(ctx, s); err != nil {
+	if err := maintain(ctx, s, os.Stderr); err != nil {
 		_ = s.Close()
 		return nil, err
 	}

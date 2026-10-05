@@ -1,0 +1,41 @@
+{{define "timeline.html"}}{{template "head" .}}
+{{with .Data}}
+<div class="section-head tl-head">
+  <h1>Timeline</h1>
+  <nav class="segmented" aria-label="Period">
+    <a href="?range=24h"{{if eq .Range "24h"}} aria-current="page"{{end}}>24 hours</a>
+    <a href="?range=7d"{{if eq .Range "7d"}} aria-current="page"{{end}}>7 days</a>
+  </nav>
+</div>
+<ul class="tl-legend" aria-label="Legend">
+  <li><svg width="18" height="16" aria-hidden="true"><rect class="tl-ok" x="0" y="5" width="18" height="6" rx="2"/></svg>Success</li>
+  <li><svg width="18" height="16" aria-hidden="true"><rect class="tl-fail" x="0" y="1" width="18" height="14" rx="2"/></svg>Failed or timed out</li>
+  <li><svg width="18" height="16" aria-hidden="true"><rect class="tl-missed" x="1" y="1" width="16" height="14" rx="2"/></svg>Missed</li>
+  <li><svg width="18" height="16" aria-hidden="true"><rect class="tl-running" x="0" y="5" width="18" height="6" rx="2"/></svg>Running</li>
+  <li><svg width="18" height="16" aria-hidden="true"><rect class="tl-minor" x="0" y="7" width="18" height="2" rx="1"/></svg>Skipped or cancelled</li>
+  <li><svg width="18" height="16" aria-hidden="true"><line class="tl-expected" x1="9" x2="9" y1="4" y2="14"/></svg>Expected</li>
+</ul>
+<section class="panel tl">
+  {{$ticks := .Ticks}}
+  <div class="tl-row tl-axis-row" aria-hidden="true">
+    <span></span>
+    <svg class="tl-axis" height="20">{{range $ticks}}<text x="{{.Pct}}" y="14">{{.Label}}</text>{{end}}<text class="tl-now" x="100%" y="14">now</text></svg>
+  </div>
+  {{range .Lanes}}
+  <div class="tl-row">
+    <a class="tl-name" href="/jobs/{{.Job.ID}}">{{.Job.Name}}</a>
+    <svg class="tl-track" height="28" role="img" aria-label="{{.Summary}}">
+      {{- range $ticks}}<line class="tl-grid" x1="{{.Pct}}" x2="{{.Pct}}" y1="0" y2="28"/>{{end}}
+      {{- range .Expected}}<line class="tl-expected" x1="{{.}}" x2="{{.}}" y1="23" y2="28"/>{{end}}
+      {{- range .Marks}}
+      <a href="{{.Href}}"><title>{{.Title}}</title><rect class="tl-hit" x="{{.X}}" width="{{.W}}" y="0" height="28"/><rect class="tl-{{.Kind}}{{if .Overlaps}} tl-overlap{{end}}" x="{{.X}}" width="{{.W}}" {{if eq .Kind "fail" "missed"}}y="3" height="22"{{else if eq .Kind "minor"}}y="13" height="2"{{else}}y="9" height="10"{{end}} rx="2"/></a>
+      {{- end}}
+    </svg>
+  </div>
+  {{else}}
+  <p class="empty">No jobs yet.</p>
+  {{end}}
+</section>
+<p class="muted tl-note">Hover a mark for details; click it to open the run. Times are this server's local time.</p>
+{{end}}
+{{template "foot"}}{{end}}

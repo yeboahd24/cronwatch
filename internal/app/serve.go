@@ -118,7 +118,7 @@ func maintenanceLoop(ctx context.Context, done <-chan struct{}, s *storage.Store
 				}
 			}
 		}
-		if err := maintain(ctx, s); err != nil && ctx.Err() == nil {
+		if err := maintain(ctx, s, stderr); err != nil && ctx.Err() == nil {
 			fmt.Fprintln(stderr, "maintenance:", err)
 		}
 		select {
@@ -131,13 +131,16 @@ func maintenanceLoop(ctx context.Context, done <-chan struct{}, s *storage.Store
 	}
 }
 
-// maintain reaps abandoned runs, then records missed occurrences. Reaping
-// first means a dead run's status is settled before missed runs are judged.
-func maintain(ctx context.Context, s *storage.Store) error {
+// maintain reaps abandoned runs, then records missed occurrences and runs the
+// --on-failure hooks of jobs that just started missing runs. Reaping first
+// means a dead run's status is settled before missed runs are judged.
+func maintain(ctx context.Context, s *storage.Store, stderr io.Writer) error {
 	if _, err := s.ReapAbandonedRuns(ctx); err != nil {
 		return fmt.Errorf("reap abandoned runs: %w", err)
 	}
-	if _, err := s.DetectMissed(ctx, time.Now()); err != nil {
+	missed, err := s.DetectMissedJobs(ctx, time.Now())
+	notifyMissed(ctx, s, missed, stderr)
+	if err != nil {
 		return fmt.Errorf("detect missed runs: %w", err)
 	}
 	return nil

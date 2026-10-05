@@ -5,7 +5,8 @@
   <div><h1>Run · {{.Job.Name}}</h1><p class="subtitle">{{full .Run.StartedAt}}</p></div>
   {{template "status" .Run.Status}}
 </div>
-{{if .LastError}}<div class="error-callout" role="note"><span class="error-label">Last error</span><code>{{.LastError}}</code></div>{{end}}
+{{if and .Run.Reason (ne .Run.Status "success")}}<div class="error-callout{{if eq .Run.Status "skipped"}} is-muted{{end}}" role="note"><span class="error-label">{{status .Run.Status}}</span><span>{{.Run.Reason}}</span></div>
+{{else if .LastError}}<div class="error-callout" role="note"><span class="error-label">Last error</span><code>{{.LastError}}</code></div>{{end}}
 {{with .Env}}{{with .Changed}}<div class="env-callout" role="note">
   <p class="env-callout-title">Environment changed since the <a href="/runs/{{.Since.ID}}">last successful run</a> {{template "time" .Since.StartedAt}}</p>
   <ul>
@@ -26,6 +27,10 @@
     <dt>Exit code</dt><dd>{{if .Run.ExitCode}}{{.Run.ExitCode}}{{else}}—{{end}}</dd>
     <dt>Duration</dt><dd>{{duration .Run.DurationMS}}</dd>
     <dt>Ended</dt><dd>{{if .Run.EndedAt}}{{template "time" .Run.EndedAt}}{{else}}—{{end}}</dd>
+    {{if and .Run.Reason (eq .Run.Status "success")}}<dt>Status</dt><dd>Success: {{.Run.Reason}}</dd>{{end}}
+    {{if and .Run.OverlappedRunID (ne .Run.Status "skipped")}}<dt>Overlap</dt><dd class="text-warning">Started while <a href="/runs/{{.Run.OverlappedRunID}}">an earlier run</a> was still running</dd>{{end}}
+    {{with .Run.Usage}}<dt>Peak memory</dt><dd>{{kb .MaxRSSKB}}</dd>
+    <dt>CPU time</dt><dd>{{ms .UserCPUMS}} user, {{ms .SysCPUMS}} system</dd>{{end}}
     {{if .Run.Truncated}}<dt>Output</dt><dd class="text-warning">Truncated — the middle of the output was dropped to fit the capture limit</dd>{{end}}
   </dl>
 </section>

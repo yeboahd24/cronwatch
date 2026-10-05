@@ -14,6 +14,8 @@ var statusLabels = map[string]string{
 	"missed":           "Missed",
 	"running":          "Running",
 	"cancelled":        "Cancelled",
+	"timeout":          "Timed out",
+	"skipped":          "Skipped",
 	"never_run":        "Never run",
 	"invalid_schedule": "Invalid schedule",
 }
@@ -71,6 +73,20 @@ func humanDuration(d time.Duration) string {
 			return fmt.Sprintf("%dh", h)
 		}
 		return fmt.Sprintf("%dh %dm", h, m)
+	}
+}
+
+// humanKB formats a size in kilobytes: "512 KB", "42 MB", "1.5 GB".
+func humanKB(kb int64) string {
+	switch {
+	case kb < 1024:
+		return fmt.Sprintf("%d KB", kb)
+	case kb < 10*1024:
+		return strconv.FormatFloat(float64(kb)/1024, 'f', 1, 64) + " MB"
+	case kb < 1024*1024:
+		return fmt.Sprintf("%d MB", kb/1024)
+	default:
+		return strconv.FormatFloat(float64(kb)/(1024*1024), 'f', 1, 64) + " GB"
 	}
 }
 

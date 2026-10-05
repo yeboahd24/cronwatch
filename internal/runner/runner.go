@@ -5,20 +5,24 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"os/exec"
+	"runtime"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/yeboahd24/cronwatch/internal/logs"
+	"github.com/yeboahd24/cronwatch/internal/model"
 )
 
 type Result struct {
 	Stdout, Stderr, Combined string
 	Truncated                bool
 	ExitCode                 int
-	Status                   string
+	Status                   string // success, failed, cancelled or timeout
 	Duration                 time.Duration
+	Usage                    *model.Usage // nil if the command never started
 }
 
 type capture struct {
@@ -99,6 +103,11 @@ func Execute(ctx context.Context, command []string, echoStdout, echoStderr io.Wr
 	started := time.Now()
 	err := cmd.Run()
 	result.Duration = time.Since(started)
+	if ctx.Err() != nil && cmd.Process != nil {
+		// WaitDelay's SIGKILL reaches only the child; finish off the rest of
+		// its group, such as grandchildren that ignored SIGTERM.
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
 	exit, isExit := errors.AsType[*exec.ExitError](err)
 	if err != nil && !isExit {
 		// The child never ran (e.g. not found), so record why in the logs.
@@ -114,7 +123,10 @@ func Execute(ctx context.Context, command []string, echoStdout, echoStderr io.Wr
 	result.Truncated = c.stdout.Truncated() || c.stderr.Truncated() || c.combined.Truncated()
 	c.mu.Unlock()
 	result.Status = "success"
-	if ctx.Err() != nil {
+	result.Usage = usage(cmd.ProcessState)
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		result.Status = "timeout"
+	} else if ctx.Err() != nil {
 		result.Status = "cancelled"
 	} else if err != nil {
 		result.Status = "failed"
@@ -130,4 +142,25 @@ func Execute(ctx context.Context, command []string, echoStdout, echoStderr io.Wr
 		result.ExitCode = 127
 	}
 	return result, err
+}
+
+// usage reads the resources a finished child used, including the children it
+// waited for.
+func usage(ps *os.ProcessState) *model.Usage {
+	if ps == nil {
+		return nil
+	}
+	ru, ok := ps.SysUsage().(*syscall.Rusage)
+	if !ok {
+		return nil
+	}
+	maxRSS := int64(ru.Maxrss)
+	if runtime.GOOS == "darwin" {
+		maxRSS /= 1024 // bytes on macOS, kilobytes on Linux
+	}
+	return &model.Usage{
+		MaxRSSKB:  maxRSS,
+		UserCPUMS: time.Duration(ru.Utime.Nano()).Milliseconds(),
+		SysCPUMS:  time.Duration(ru.Stime.Nano()).Milliseconds(),
+	}
 }

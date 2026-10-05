@@ -10,6 +10,39 @@ import (
 	"database/sql"
 )
 
+const countRunsSince = `-- name: CountRunsSince :many
+SELECT job_id, status, count(*) AS runs FROM runs WHERE started_at >= ? GROUP BY job_id, status
+`
+
+type CountRunsSinceRow struct {
+	JobID  string
+	Status string
+	Runs   int64
+}
+
+func (q *Queries) CountRunsSince(ctx context.Context, startedAt string) ([]CountRunsSinceRow, error) {
+	rows, err := q.db.QueryContext(ctx, countRunsSince, startedAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CountRunsSinceRow
+	for rows.Next() {
+		var i CountRunsSinceRow
+		if err := rows.Scan(&i.JobID, &i.Status, &i.Runs); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const createRun = `-- name: CreateRun :exec
 INSERT INTO runs (id, job_id, started_at, status, created_at, pid, host)
 VALUES (?, ?, ?, 'running', ?, ?, ?)
@@ -67,7 +100,8 @@ func (q *Queries) DeleteRunsBeyondKeep(ctx context.Context, offset int64) (int64
 
 const finishRun = `-- name: FinishRun :execrows
 UPDATE runs SET ended_at = ?, duration_ms = ?, status = ?, exit_code = ?,
-    stdout = ?, stderr = ?, combined_log = ?, truncated = ?
+    stdout = ?, stderr = ?, combined_log = ?, truncated = ?, reason = ?,
+    max_rss_kb = ?, user_cpu_ms = ?, sys_cpu_ms = ?
 WHERE id = ? AND status = 'running'
 `
 
@@ -80,6 +114,10 @@ type FinishRunParams struct {
 	Stderr      string
 	CombinedLog string
 	Truncated   int64
+	Reason      sql.NullString
+	MaxRssKb    sql.NullInt64
+	UserCpuMs   sql.NullInt64
+	SysCpuMs    sql.NullInt64
 	ID          string
 }
 
@@ -93,6 +131,10 @@ func (q *Queries) FinishRun(ctx context.Context, arg FinishRunParams) (int64, er
 		arg.Stderr,
 		arg.CombinedLog,
 		arg.Truncated,
+		arg.Reason,
+		arg.MaxRssKb,
+		arg.UserCpuMs,
+		arg.SysCpuMs,
 		arg.ID,
 	)
 	if err != nil {
@@ -102,7 +144,7 @@ func (q *Queries) FinishRun(ctx context.Context, arg FinishRunParams) (int64, er
 }
 
 const getRun = `-- name: GetRun :one
-SELECT id, job_id, started_at, ended_at, duration_ms, status, exit_code, stdout, stderr, combined_log, truncated, created_at, pid, host, env_hash FROM runs WHERE id = ?
+SELECT id, job_id, started_at, ended_at, duration_ms, status, exit_code, stdout, stderr, combined_log, truncated, created_at, pid, host, env_hash, reason, overlapped_run_id, max_rss_kb, user_cpu_ms, sys_cpu_ms FROM runs WHERE id = ?
 `
 
 func (q *Queries) GetRun(ctx context.Context, id string) (Run, error) {
@@ -124,12 +166,17 @@ func (q *Queries) GetRun(ctx context.Context, id string) (Run, error) {
 		&i.Pid,
 		&i.Host,
 		&i.EnvHash,
+		&i.Reason,
+		&i.OverlappedRunID,
+		&i.MaxRssKb,
+		&i.UserCpuMs,
+		&i.SysCpuMs,
 	)
 	return i, err
 }
 
 const lastSuccessWithEnvBefore = `-- name: LastSuccessWithEnvBefore :one
-SELECT id, job_id, started_at, ended_at, duration_ms, status, exit_code, stdout, stderr, combined_log, truncated, created_at, pid, host, env_hash FROM runs
+SELECT id, job_id, started_at, ended_at, duration_ms, status, exit_code, stdout, stderr, combined_log, truncated, created_at, pid, host, env_hash, reason, overlapped_run_id, max_rss_kb, user_cpu_ms, sys_cpu_ms FROM runs
 WHERE job_id = ? AND status = 'success' AND env_hash IS NOT NULL AND started_at < ?
 ORDER BY started_at DESC LIMIT 1
 `
@@ -158,12 +205,17 @@ func (q *Queries) LastSuccessWithEnvBefore(ctx context.Context, arg LastSuccessW
 		&i.Pid,
 		&i.Host,
 		&i.EnvHash,
+		&i.Reason,
+		&i.OverlappedRunID,
+		&i.MaxRssKb,
+		&i.UserCpuMs,
+		&i.SysCpuMs,
 	)
 	return i, err
 }
 
 const latestRunWithEnv = `-- name: LatestRunWithEnv :one
-SELECT id, job_id, started_at, ended_at, duration_ms, status, exit_code, stdout, stderr, combined_log, truncated, created_at, pid, host, env_hash FROM runs WHERE job_id = ? AND env_hash IS NOT NULL
+SELECT id, job_id, started_at, ended_at, duration_ms, status, exit_code, stdout, stderr, combined_log, truncated, created_at, pid, host, env_hash, reason, overlapped_run_id, max_rss_kb, user_cpu_ms, sys_cpu_ms FROM runs WHERE job_id = ? AND env_hash IS NOT NULL
 ORDER BY started_at DESC LIMIT 1
 `
 
@@ -186,6 +238,49 @@ func (q *Queries) LatestRunWithEnv(ctx context.Context, jobID string) (Run, erro
 		&i.Pid,
 		&i.Host,
 		&i.EnvHash,
+		&i.Reason,
+		&i.OverlappedRunID,
+		&i.MaxRssKb,
+		&i.UserCpuMs,
+		&i.SysCpuMs,
+	)
+	return i, err
+}
+
+const latestRunningRunBefore = `-- name: LatestRunningRunBefore :one
+SELECT id, job_id, started_at, ended_at, duration_ms, status, exit_code, stdout, stderr, combined_log, truncated, created_at, pid, host, env_hash, reason, overlapped_run_id, max_rss_kb, user_cpu_ms, sys_cpu_ms FROM runs WHERE job_id = ? AND status = 'running' AND id != ?
+ORDER BY started_at DESC LIMIT 1
+`
+
+type LatestRunningRunBeforeParams struct {
+	JobID string
+	ID    string
+}
+
+func (q *Queries) LatestRunningRunBefore(ctx context.Context, arg LatestRunningRunBeforeParams) (Run, error) {
+	row := q.db.QueryRowContext(ctx, latestRunningRunBefore, arg.JobID, arg.ID)
+	var i Run
+	err := row.Scan(
+		&i.ID,
+		&i.JobID,
+		&i.StartedAt,
+		&i.EndedAt,
+		&i.DurationMs,
+		&i.Status,
+		&i.ExitCode,
+		&i.Stdout,
+		&i.Stderr,
+		&i.CombinedLog,
+		&i.Truncated,
+		&i.CreatedAt,
+		&i.Pid,
+		&i.Host,
+		&i.EnvHash,
+		&i.Reason,
+		&i.OverlappedRunID,
+		&i.MaxRssKb,
+		&i.UserCpuMs,
+		&i.SysCpuMs,
 	)
 	return i, err
 }
@@ -223,7 +318,7 @@ func (q *Queries) ListRunStartsSince(ctx context.Context, arg ListRunStartsSince
 }
 
 const listRunningRuns = `-- name: ListRunningRuns :many
-SELECT id, job_id, started_at, ended_at, duration_ms, status, exit_code, stdout, stderr, combined_log, truncated, created_at, pid, host, env_hash FROM runs WHERE status = 'running'
+SELECT id, job_id, started_at, ended_at, duration_ms, status, exit_code, stdout, stderr, combined_log, truncated, created_at, pid, host, env_hash, reason, overlapped_run_id, max_rss_kb, user_cpu_ms, sys_cpu_ms FROM runs WHERE status = 'running'
 `
 
 func (q *Queries) ListRunningRuns(ctx context.Context) ([]Run, error) {
@@ -251,6 +346,11 @@ func (q *Queries) ListRunningRuns(ctx context.Context) ([]Run, error) {
 			&i.Pid,
 			&i.Host,
 			&i.EnvHash,
+			&i.Reason,
+			&i.OverlappedRunID,
+			&i.MaxRssKb,
+			&i.UserCpuMs,
+			&i.SysCpuMs,
 		); err != nil {
 			return nil, err
 		}
@@ -266,7 +366,7 @@ func (q *Queries) ListRunningRuns(ctx context.Context) ([]Run, error) {
 }
 
 const listRunsForJob = `-- name: ListRunsForJob :many
-SELECT id, job_id, started_at, ended_at, duration_ms, status, exit_code, stdout, stderr, combined_log, truncated, created_at, pid, host, env_hash FROM runs WHERE job_id = ? ORDER BY started_at DESC LIMIT ?
+SELECT id, job_id, started_at, ended_at, duration_ms, status, exit_code, stdout, stderr, combined_log, truncated, created_at, pid, host, env_hash, reason, overlapped_run_id, max_rss_kb, user_cpu_ms, sys_cpu_ms FROM runs WHERE job_id = ? ORDER BY started_at DESC LIMIT ?
 `
 
 type ListRunsForJobParams struct {
@@ -299,6 +399,69 @@ func (q *Queries) ListRunsForJob(ctx context.Context, arg ListRunsForJobParams) 
 			&i.Pid,
 			&i.Host,
 			&i.EnvHash,
+			&i.Reason,
+			&i.OverlappedRunID,
+			&i.MaxRssKb,
+			&i.UserCpuMs,
+			&i.SysCpuMs,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRunsOverlapping = `-- name: ListRunsOverlapping :many
+SELECT id, job_id, started_at, ended_at, duration_ms, status, exit_code, reason, overlapped_run_id
+FROM runs WHERE started_at < ?1 AND (ended_at IS NULL OR ended_at >= ?2)
+ORDER BY started_at
+`
+
+type ListRunsOverlappingParams struct {
+	ToTime   string
+	FromTime sql.NullString
+}
+
+type ListRunsOverlappingRow struct {
+	ID              string
+	JobID           string
+	StartedAt       string
+	EndedAt         sql.NullString
+	DurationMs      sql.NullInt64
+	Status          string
+	ExitCode        sql.NullInt64
+	Reason          sql.NullString
+	OverlappedRunID sql.NullString
+}
+
+// Runs that were running at some point in [from, to): started before to and
+// not ended before from.
+func (q *Queries) ListRunsOverlapping(ctx context.Context, arg ListRunsOverlappingParams) ([]ListRunsOverlappingRow, error) {
+	rows, err := q.db.QueryContext(ctx, listRunsOverlapping, arg.ToTime, arg.FromTime)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRunsOverlappingRow
+	for rows.Next() {
+		var i ListRunsOverlappingRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.JobID,
+			&i.StartedAt,
+			&i.EndedAt,
+			&i.DurationMs,
+			&i.Status,
+			&i.ExitCode,
+			&i.Reason,
+			&i.OverlappedRunID,
 		); err != nil {
 			return nil, err
 		}
@@ -314,7 +477,7 @@ func (q *Queries) ListRunsForJob(ctx context.Context, arg ListRunsForJobParams) 
 }
 
 const listRunsWithJob = `-- name: ListRunsWithJob :many
-SELECT runs.id, runs.job_id, runs.started_at, runs.ended_at, runs.duration_ms, runs.status, runs.exit_code, runs.stdout, runs.stderr, runs.combined_log, runs.truncated, runs.created_at, runs.pid, runs.host, runs.env_hash, jobs.name AS job_name
+SELECT runs.id, runs.job_id, runs.started_at, runs.ended_at, runs.duration_ms, runs.status, runs.exit_code, runs.stdout, runs.stderr, runs.combined_log, runs.truncated, runs.created_at, runs.pid, runs.host, runs.env_hash, runs.reason, runs.overlapped_run_id, runs.max_rss_kb, runs.user_cpu_ms, runs.sys_cpu_ms, jobs.name AS job_name
 FROM runs JOIN jobs ON jobs.id = runs.job_id
 ORDER BY runs.started_at DESC LIMIT ?
 `
@@ -349,6 +512,11 @@ func (q *Queries) ListRunsWithJob(ctx context.Context, limit int64) ([]ListRunsW
 			&i.Run.Pid,
 			&i.Run.Host,
 			&i.Run.EnvHash,
+			&i.Run.Reason,
+			&i.Run.OverlappedRunID,
+			&i.Run.MaxRssKb,
+			&i.Run.UserCpuMs,
+			&i.Run.SysCpuMs,
 			&i.JobName,
 		); err != nil {
 			return nil, err
@@ -364,8 +532,48 @@ func (q *Queries) ListRunsWithJob(ctx context.Context, limit int64) ([]ListRunsW
 	return items, nil
 }
 
+const previousFinishedRun = `-- name: PreviousFinishedRun :one
+SELECT id, job_id, started_at, ended_at, duration_ms, status, exit_code, stdout, stderr, combined_log, truncated, created_at, pid, host, env_hash, reason, overlapped_run_id, max_rss_kb, user_cpu_ms, sys_cpu_ms FROM runs
+WHERE job_id = ? AND status NOT IN ('running', 'skipped') AND started_at < ?
+ORDER BY started_at DESC LIMIT 1
+`
+
+type PreviousFinishedRunParams struct {
+	JobID     string
+	StartedAt string
+}
+
+// The job's newest finished run before the given start, ignoring skipped runs.
+func (q *Queries) PreviousFinishedRun(ctx context.Context, arg PreviousFinishedRunParams) (Run, error) {
+	row := q.db.QueryRowContext(ctx, previousFinishedRun, arg.JobID, arg.StartedAt)
+	var i Run
+	err := row.Scan(
+		&i.ID,
+		&i.JobID,
+		&i.StartedAt,
+		&i.EndedAt,
+		&i.DurationMs,
+		&i.Status,
+		&i.ExitCode,
+		&i.Stdout,
+		&i.Stderr,
+		&i.CombinedLog,
+		&i.Truncated,
+		&i.CreatedAt,
+		&i.Pid,
+		&i.Host,
+		&i.EnvHash,
+		&i.Reason,
+		&i.OverlappedRunID,
+		&i.MaxRssKb,
+		&i.UserCpuMs,
+		&i.SysCpuMs,
+	)
+	return i, err
+}
+
 const searchRunLogs = `-- name: SearchRunLogs :many
-SELECT runs.id, runs.job_id, runs.started_at, runs.ended_at, runs.duration_ms, runs.status, runs.exit_code, runs.stdout, runs.stderr, runs.combined_log, runs.truncated, runs.created_at, runs.pid, runs.host, runs.env_hash, jobs.name AS job_name
+SELECT runs.id, runs.job_id, runs.started_at, runs.ended_at, runs.duration_ms, runs.status, runs.exit_code, runs.stdout, runs.stderr, runs.combined_log, runs.truncated, runs.created_at, runs.pid, runs.host, runs.env_hash, runs.reason, runs.overlapped_run_id, runs.max_rss_kb, runs.user_cpu_ms, runs.sys_cpu_ms, jobs.name AS job_name
 FROM runs JOIN jobs ON jobs.id = runs.job_id
 WHERE runs.status != 'running'
   AND instr(lower(runs.combined_log), lower(?1)) > 0
@@ -407,6 +615,11 @@ func (q *Queries) SearchRunLogs(ctx context.Context, arg SearchRunLogsParams) ([
 			&i.Run.Pid,
 			&i.Run.Host,
 			&i.Run.EnvHash,
+			&i.Run.Reason,
+			&i.Run.OverlappedRunID,
+			&i.Run.MaxRssKb,
+			&i.Run.UserCpuMs,
+			&i.Run.SysCpuMs,
 			&i.JobName,
 		); err != nil {
 			return nil, err
@@ -433,5 +646,19 @@ type SetRunEnvParams struct {
 
 func (q *Queries) SetRunEnv(ctx context.Context, arg SetRunEnvParams) error {
 	_, err := q.db.ExecContext(ctx, setRunEnv, arg.EnvHash, arg.ID)
+	return err
+}
+
+const setRunOverlap = `-- name: SetRunOverlap :exec
+UPDATE runs SET overlapped_run_id = ? WHERE id = ?
+`
+
+type SetRunOverlapParams struct {
+	OverlappedRunID sql.NullString
+	ID              string
+}
+
+func (q *Queries) SetRunOverlap(ctx context.Context, arg SetRunOverlapParams) error {
+	_, err := q.db.ExecContext(ctx, setRunOverlap, arg.OverlappedRunID, arg.ID)
 	return err
 }

@@ -1,11 +1,13 @@
 -- name: UpsertJob :exec
-INSERT INTO jobs (id, slug, name, command, schedule, grace_seconds, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO jobs (id, slug, name, command, schedule, grace_seconds, on_failure, on_recover, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(slug) DO UPDATE SET
     name = excluded.name,
     command = excluded.command,
     schedule = excluded.schedule,
     grace_seconds = excluded.grace_seconds,
+    on_failure = excluded.on_failure,
+    on_recover = excluded.on_recover,
     updated_at = excluded.updated_at,
     -- A new schedule must not be judged against occurrences before it existed.
     missed_checked_until = CASE WHEN jobs.schedule IS excluded.schedule

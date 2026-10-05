@@ -17,17 +17,18 @@
 <h2>Recent runs</h2>
 <section class="panel table-wrap">
   <table>
-    <thead><tr><th scope="col">Started</th><th scope="col">Status</th><th scope="col">Duration</th><th scope="col">Exit code</th></tr></thead>
+    <thead><tr><th scope="col">Started</th><th scope="col">Status</th><th scope="col">Duration</th><th scope="col">Peak memory</th><th scope="col">Exit code</th></tr></thead>
     <tbody>
     {{- range .Runs}}
     <tr>
       <td data-label="Started"><a href="/runs/{{.ID}}">{{template "time" .StartedAt}}</a></td>
       <td data-label="Status">{{template "status" .Status}}</td>
       <td data-label="Duration">{{duration .DurationMS}}</td>
+      <td data-label="Peak memory">{{with .Usage}}{{kb .MaxRSSKB}}{{else}}—{{end}}</td>
       <td data-label="Exit code">{{if .ExitCode}}{{.ExitCode}}{{else}}—{{end}}</td>
     </tr>
     {{- else}}
-    <tr><td colspan="4" class="empty">No runs recorded.</td></tr>
+    <tr><td colspan="5" class="empty">No runs recorded.</td></tr>
     {{- end}}
     </tbody>
   </table>

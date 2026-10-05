@@ -9,6 +9,39 @@ import (
 	"context"
 )
 
+const countMissedSince = `-- name: CountMissedSince :many
+SELECT job_id, count(*) AS missed
+FROM missed_occurrences WHERE expected_at >= ? GROUP BY job_id
+`
+
+type CountMissedSinceRow struct {
+	JobID  string
+	Missed int64
+}
+
+func (q *Queries) CountMissedSince(ctx context.Context, expectedAt string) ([]CountMissedSinceRow, error) {
+	rows, err := q.db.QueryContext(ctx, countMissedSince, expectedAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CountMissedSinceRow
+	for rows.Next() {
+		var i CountMissedSinceRow
+		if err := rows.Scan(&i.JobID, &i.Missed); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const deleteMissedBefore = `-- name: DeleteMissedBefore :execrows
 DELETE FROM missed_occurrences WHERE expected_at < ?
 `
@@ -32,7 +65,56 @@ func (q *Queries) LatestMissedOccurrence(ctx context.Context, jobID string) (str
 	return expected_at, err
 }
 
-const recordMissedOccurrence = `-- name: RecordMissedOccurrence :exec
+const latestMissedOccurrenceBefore = `-- name: LatestMissedOccurrenceBefore :one
+SELECT expected_at FROM missed_occurrences WHERE job_id = ? AND expected_at < ?
+ORDER BY expected_at DESC LIMIT 1
+`
+
+type LatestMissedOccurrenceBeforeParams struct {
+	JobID      string
+	ExpectedAt string
+}
+
+func (q *Queries) LatestMissedOccurrenceBefore(ctx context.Context, arg LatestMissedOccurrenceBeforeParams) (string, error) {
+	row := q.db.QueryRowContext(ctx, latestMissedOccurrenceBefore, arg.JobID, arg.ExpectedAt)
+	var expected_at string
+	err := row.Scan(&expected_at)
+	return expected_at, err
+}
+
+const listMissedSince = `-- name: ListMissedSince :many
+SELECT job_id, expected_at FROM missed_occurrences WHERE expected_at >= ? ORDER BY expected_at
+`
+
+type ListMissedSinceRow struct {
+	JobID      string
+	ExpectedAt string
+}
+
+func (q *Queries) ListMissedSince(ctx context.Context, expectedAt string) ([]ListMissedSinceRow, error) {
+	rows, err := q.db.QueryContext(ctx, listMissedSince, expectedAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListMissedSinceRow
+	for rows.Next() {
+		var i ListMissedSinceRow
+		if err := rows.Scan(&i.JobID, &i.ExpectedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const recordMissedOccurrence = `-- name: RecordMissedOccurrence :execrows
 INSERT OR IGNORE INTO missed_occurrences (id, job_id, expected_at, detected_at)
 VALUES (?, ?, ?, ?)
 `
@@ -44,12 +126,15 @@ type RecordMissedOccurrenceParams struct {
 	DetectedAt string
 }
 
-func (q *Queries) RecordMissedOccurrence(ctx context.Context, arg RecordMissedOccurrenceParams) error {
-	_, err := q.db.ExecContext(ctx, recordMissedOccurrence,
+func (q *Queries) RecordMissedOccurrence(ctx context.Context, arg RecordMissedOccurrenceParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, recordMissedOccurrence,
 		arg.ID,
 		arg.JobID,
 		arg.ExpectedAt,
 		arg.DetectedAt,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }

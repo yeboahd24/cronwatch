@@ -4,8 +4,25 @@ VALUES (?, ?, ?, 'running', ?, ?, ?);
 
 -- name: FinishRun :execrows
 UPDATE runs SET ended_at = ?, duration_ms = ?, status = ?, exit_code = ?,
-    stdout = ?, stderr = ?, combined_log = ?, truncated = ?
+    stdout = ?, stderr = ?, combined_log = ?, truncated = ?, reason = ?,
+    max_rss_kb = ?, user_cpu_ms = ?, sys_cpu_ms = ?
 WHERE id = ? AND status = 'running';
+
+-- name: CountRunsSince :many
+SELECT job_id, status, count(*) AS runs FROM runs WHERE started_at >= ? GROUP BY job_id, status;
+
+-- name: SetRunOverlap :exec
+UPDATE runs SET overlapped_run_id = ? WHERE id = ?;
+
+-- name: LatestRunningRunBefore :one
+SELECT * FROM runs WHERE job_id = ? AND status = 'running' AND id != ?
+ORDER BY started_at DESC LIMIT 1;
+
+-- name: PreviousFinishedRun :one
+-- The job's newest finished run before the given start, ignoring skipped runs.
+SELECT * FROM runs
+WHERE job_id = ? AND status NOT IN ('running', 'skipped') AND started_at < ?
+ORDER BY started_at DESC LIMIT 1;
 
 -- name: GetRun :one
 SELECT * FROM runs WHERE id = ?;
@@ -53,3 +70,10 @@ ORDER BY started_at DESC LIMIT 1;
 SELECT * FROM runs
 WHERE job_id = ? AND status = 'success' AND env_hash IS NOT NULL AND started_at < ?
 ORDER BY started_at DESC LIMIT 1;
+
+-- name: ListRunsOverlapping :many
+-- Runs that were running at some point in [from, to): started before to and
+-- not ended before from.
+SELECT id, job_id, started_at, ended_at, duration_ms, status, exit_code, reason, overlapped_run_id
+FROM runs WHERE started_at < sqlc.arg(to_time) AND (ended_at IS NULL OR ended_at >= sqlc.arg(from_time))
+ORDER BY started_at;

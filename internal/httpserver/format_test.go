@@ -60,3 +60,11 @@ func TestStatusLabel(t *testing.T) {
 		t.Fatal("unexpected labels")
 	}
 }
+
+func TestHumanKB(t *testing.T) {
+	for kb, want := range map[int64]string{0: "0 KB", 512: "512 KB", 1536: "1.5 MB", 43008: "42 MB", 1572864: "1.5 GB"} {
+		if got := humanKB(kb); got != want {
+			t.Errorf("humanKB(%d) = %q, want %q", kb, got, want)
+		}
+	}
+}

@@ -24,6 +24,8 @@ type Job struct {
 	CreatedAt          string
 	UpdatedAt          string
 	MissedCheckedUntil sql.NullString
+	OnFailure          sql.NullString
+	OnRecover          sql.NullString
 }
 
 type MissedOccurrence struct {
@@ -34,19 +36,24 @@ type MissedOccurrence struct {
 }
 
 type Run struct {
-	ID          string
-	JobID       string
-	StartedAt   string
-	EndedAt     sql.NullString
-	DurationMs  sql.NullInt64
-	Status      string
-	ExitCode    sql.NullInt64
-	Stdout      string
-	Stderr      string
-	CombinedLog string
-	Truncated   int64
-	CreatedAt   string
-	Pid         sql.NullInt64
-	Host        sql.NullString
-	EnvHash     sql.NullString
+	ID              string
+	JobID           string
+	StartedAt       string
+	EndedAt         sql.NullString
+	DurationMs      sql.NullInt64
+	Status          string
+	ExitCode        sql.NullInt64
+	Stdout          string
+	Stderr          string
+	CombinedLog     string
+	Truncated       int64
+	CreatedAt       string
+	Pid             sql.NullInt64
+	Host            sql.NullString
+	EnvHash         sql.NullString
+	Reason          sql.NullString
+	OverlappedRunID sql.NullString
+	MaxRssKb        sql.NullInt64
+	UserCpuMs       sql.NullInt64
+	SysCpuMs        sql.NullInt64
 }

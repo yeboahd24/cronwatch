@@ -11,7 +11,7 @@ import (
 )
 
 const getJob = `-- name: GetJob :one
-SELECT id, slug, name, command, schedule, grace_seconds, created_at, updated_at, missed_checked_until FROM jobs WHERE id = ?
+SELECT id, slug, name, command, schedule, grace_seconds, created_at, updated_at, missed_checked_until, on_failure, on_recover FROM jobs WHERE id = ?
 `
 
 func (q *Queries) GetJob(ctx context.Context, id string) (Job, error) {
@@ -27,12 +27,14 @@ func (q *Queries) GetJob(ctx context.Context, id string) (Job, error) {
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.MissedCheckedUntil,
+		&i.OnFailure,
+		&i.OnRecover,
 	)
 	return i, err
 }
 
 const getJobBySlug = `-- name: GetJobBySlug :one
-SELECT id, slug, name, command, schedule, grace_seconds, created_at, updated_at, missed_checked_until FROM jobs WHERE slug = ?
+SELECT id, slug, name, command, schedule, grace_seconds, created_at, updated_at, missed_checked_until, on_failure, on_recover FROM jobs WHERE slug = ?
 `
 
 func (q *Queries) GetJobBySlug(ctx context.Context, slug string) (Job, error) {
@@ -48,12 +50,14 @@ func (q *Queries) GetJobBySlug(ctx context.Context, slug string) (Job, error) {
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.MissedCheckedUntil,
+		&i.OnFailure,
+		&i.OnRecover,
 	)
 	return i, err
 }
 
 const listJobs = `-- name: ListJobs :many
-SELECT id, slug, name, command, schedule, grace_seconds, created_at, updated_at, missed_checked_until FROM jobs ORDER BY name COLLATE NOCASE
+SELECT id, slug, name, command, schedule, grace_seconds, created_at, updated_at, missed_checked_until, on_failure, on_recover FROM jobs ORDER BY name COLLATE NOCASE
 `
 
 func (q *Queries) ListJobs(ctx context.Context) ([]Job, error) {
@@ -75,6 +79,8 @@ func (q *Queries) ListJobs(ctx context.Context) ([]Job, error) {
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.MissedCheckedUntil,
+			&i.OnFailure,
+			&i.OnRecover,
 		); err != nil {
 			return nil, err
 		}
@@ -104,13 +110,15 @@ func (q *Queries) SetMissedCheckedUntil(ctx context.Context, arg SetMissedChecke
 }
 
 const upsertJob = `-- name: UpsertJob :exec
-INSERT INTO jobs (id, slug, name, command, schedule, grace_seconds, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO jobs (id, slug, name, command, schedule, grace_seconds, on_failure, on_recover, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(slug) DO UPDATE SET
     name = excluded.name,
     command = excluded.command,
     schedule = excluded.schedule,
     grace_seconds = excluded.grace_seconds,
+    on_failure = excluded.on_failure,
+    on_recover = excluded.on_recover,
     updated_at = excluded.updated_at,
     -- A new schedule must not be judged against occurrences before it existed.
     missed_checked_until = CASE WHEN jobs.schedule IS excluded.schedule
@@ -124,6 +132,8 @@ type UpsertJobParams struct {
 	Command      string
 	Schedule     sql.NullString
 	GraceSeconds int64
+	OnFailure    sql.NullString
+	OnRecover    sql.NullString
 	CreatedAt    string
 	UpdatedAt    string
 }
@@ -136,6 +146,8 @@ func (q *Queries) UpsertJob(ctx context.Context, arg UpsertJobParams) error {
 		arg.Command,
 		arg.Schedule,
 		arg.GraceSeconds,
+		arg.OnFailure,
+		arg.OnRecover,
 		arg.CreatedAt,
 		arg.UpdatedAt,
 	)

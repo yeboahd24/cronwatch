@@ -97,6 +97,17 @@ func syncCrontab(ctx context.Context, s *storage.Store, text string) (syncResult
 			continue
 		}
 		seen[spec.Slug] = entry.Line
+		// The crontab is the source of truth for its lines' hooks: a hook
+		// variable removed from it is removed from the job.
+		for _, h := range []struct {
+			dst **string
+			env string
+		}{{&spec.OnFailure, envOnFailure}, {&spec.OnRecover, envOnRecover}} {
+			if *h.dst == nil {
+				v := tab.Env[h.env]
+				*h.dst = &v
+			}
+		}
 		// Without --schedule, the line's own cron schedule is the schedule.
 		if spec.Schedule == nil && entry.Schedule != "" {
 			if err := schedule.Validate(entry.Schedule, time.Now()); err != nil {
@@ -126,7 +137,13 @@ func syncCrontab(ctx context.Context, s *storage.Store, text string) (syncResult
 		if spec.Grace != nil && int64(*spec.Grace/time.Second) != existing.GraceSeconds {
 			update.Grace = spec.Grace
 		}
-		if update.Schedule == nil && update.Grace == nil {
+		if *spec.OnFailure != existing.OnFailure {
+			update.OnFailure = spec.OnFailure
+		}
+		if *spec.OnRecover != existing.OnRecover {
+			update.OnRecover = spec.OnRecover
+		}
+		if update.Schedule == nil && update.Grace == nil && update.OnFailure == nil && update.OnRecover == nil {
 			continue
 		}
 		if _, err := s.UpsertJob(ctx, update); err != nil {

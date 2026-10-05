@@ -6,6 +6,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -64,6 +66,9 @@ type runOptions struct {
 	DataDir     string
 	NoEcho      bool
 	MaxLogBytes int64
+	Rules       runRules
+	StrictExit  bool
+	NoOverlap   bool
 }
 
 // parseRunArgs parses "cronwatch run" arguments. It is shared with crontab
@@ -80,6 +85,15 @@ func parseRunArgs(args []string, help io.Writer) (runOptions, error) {
 	dataDir := fs.String("data-dir", "", "data directory")
 	noEcho := fs.Bool("no-echo", false, "record output without also printing it")
 	maxLogBytes := fs.Int64("max-log-bytes", 1024*1024, "output `bytes` kept per stream (max 64 MiB)")
+	okCodes := fs.String("ok-codes", "", "comma-separated exit `codes` besides 0 that count as success, e.g. 3,4")
+	failOnStderr := fs.Bool("fail-on-stderr", false, "mark the run failed if the command writes anything to stderr")
+	failMatch := fs.String("fail-if-match", "", "mark the run failed if its output matches this `regexp`")
+	successMatch := fs.String("success-if-match", "", "mark the run failed unless its output matches this `regexp`")
+	timeout := fs.Duration("timeout", 0, "stop the command after this `duration` (SIGTERM, then SIGKILL 5s later) and record a timeout")
+	strictExit := fs.Bool("strict-exit", false, "exit 0 for a successful run and nonzero for a failed one, even when the rules above disagree with the command's exit code")
+	noOverlap := fs.Bool("no-overlap", false, "skip this run, and record it as skipped, if the job's previous run is still running")
+	onFailure := fs.String("on-failure", "", "shell `command` to run when the job starts failing, times out or misses a run (default $"+envOnFailure+")")
+	onRecover := fs.String("on-recover", "", "shell `command` to run when the job succeeds again after failing (default $"+envOnRecover+")")
 	sep := len(args)
 	for i, arg := range args {
 		if arg == "--" {
@@ -116,6 +130,30 @@ func parseRunArgs(args []string, help io.Writer) (runOptions, error) {
 			return opts, err
 		}
 	}
+	if *timeout < 0 {
+		return opts, errors.New("--timeout must be non-negative")
+	}
+	rules := runRules{FailOnStderr: *failOnStderr, Timeout: *timeout}
+	if *okCodes != "" {
+		codes, err := parseOKCodes(*okCodes)
+		if err != nil {
+			return opts, err
+		}
+		rules.OKCodes = codes
+	}
+	for _, m := range []struct {
+		flag, expr string
+		dst        **regexp.Regexp
+	}{{"--fail-if-match", *failMatch, &rules.FailMatch}, {"--success-if-match", *successMatch, &rules.SuccessMatch}} {
+		if m.expr == "" {
+			continue
+		}
+		re, err := regexp.Compile(m.expr)
+		if err != nil {
+			return opts, fmt.Errorf("%s: %w", m.flag, err)
+		}
+		*m.dst = re
+	}
 	if *slug == "" {
 		*slug = slugify(*name)
 	}
@@ -128,6 +166,9 @@ func parseRunArgs(args []string, help io.Writer) (runOptions, error) {
 		DataDir:     *dataDir,
 		NoEcho:      *noEcho,
 		MaxLogBytes: *maxLogBytes,
+		Rules:       rules,
+		StrictExit:  *strictExit,
+		NoOverlap:   *noOverlap,
 	}
 	// Only flags passed on this invocation change the stored job.
 	fs.Visit(func(f *flag.Flag) {
@@ -136,6 +177,10 @@ func parseRunArgs(args []string, help io.Writer) (runOptions, error) {
 			opts.Spec.Schedule = expr
 		case "grace":
 			opts.Spec.Grace = grace
+		case "on-failure":
+			opts.Spec.OnFailure = onFailure
+		case "on-recover":
+			opts.Spec.OnRecover = onRecover
 		}
 	})
 	return opts, nil
@@ -173,6 +218,15 @@ func runCommand(ctx context.Context, args []string, stdout, stderr io.Writer) er
 		return err
 	}
 	spec, command := opts.Spec, opts.Command
+	// Hook variables set in the crontab apply when the flags are not passed.
+	for _, h := range []struct {
+		dst **string
+		env string
+	}{{&spec.OnFailure, envOnFailure}, {&spec.OnRecover, envOnRecover}} {
+		if v, ok := os.LookupEnv(h.env); ok && *h.dst == nil {
+			*h.dst = &v
+		}
+	}
 	if opts.DataDir == "" {
 		cfg, err := config.Load()
 		if err != nil {
@@ -193,10 +247,29 @@ func runCommand(ctx context.Context, args []string, stdout, stderr io.Writer) er
 	if err != nil {
 		return err
 	}
+	// The job lock is held while the command runs, so a second run of the
+	// same job can tell that the first has not finished.
+	lock, locked, err := lockJob(opts.DataDir, job.Slug)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 	started := time.Now().UTC()
 	run, err := s.CreateRun(ctx, job.ID, started)
 	if err != nil {
 		return err
+	}
+	if !locked {
+		previous := ""
+		if prev, err := s.OtherRunningRun(ctx, job.ID, run.ID); err == nil {
+			previous = prev.ID
+		}
+		if opts.NoOverlap {
+			return skipRun(ctx, s, run, previous, stderr)
+		}
+		if err := s.SetRunOverlap(ctx, run.ID, previous); err != nil {
+			fmt.Fprintf(stderr, "cronwatch: warning: could not record the overlap: %v\n", err)
+		}
 	}
 	// The environment explains failures but is not needed to run the job.
 	if err := s.SetRunEnv(ctx, run.ID, runenv.Capture()); err != nil {
@@ -207,16 +280,34 @@ func runCommand(ctx context.Context, args []string, stdout, stderr io.Writer) er
 		out = stdout
 		errOut = stderr
 	}
-	result, runErr := runner.Execute(ctx, command, out, errOut, opts.MaxLogBytes)
+	runCtx := ctx
+	if opts.Rules.Timeout > 0 {
+		var cancelRun context.CancelFunc
+		runCtx, cancelRun = context.WithTimeout(ctx, opts.Rules.Timeout)
+		defer cancelRun()
+	}
+	result, runErr := runner.Execute(runCtx, command, out, errOut, opts.MaxLogBytes)
 	code := result.ExitCode
+	status, reason := opts.Rules.judge(result)
+	if reason != "" && status != "success" {
+		fmt.Fprintf(stderr, "cronwatch: %s: %s\n", status, reason)
+	}
 	// A cancelled context cannot be used to save the final state.
 	finishCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := s.FinishRun(finishCtx, run.ID, time.Now().UTC(), result.Duration, result.Status, &code, result.Stdout, result.Stderr, result.Combined, result.Truncated); err != nil {
+	if err := s.CompleteRun(finishCtx, run.ID, storage.Completion{Ended: time.Now().UTC(), Duration: result.Duration,
+		Status: status, ExitCode: &code, Stdout: result.Stdout, Stderr: result.Stderr, Combined: result.Combined,
+		Truncated: result.Truncated, Reason: reason, Usage: result.Usage}); err != nil {
 		return fmt.Errorf("record run result: %w", err)
 	}
-	if runErr != nil {
-		return &ExitError{Code: code, Err: runErr}
+	if finished, err := s.GetRun(finishCtx, run.ID); err == nil {
+		notifyRun(finishCtx, s, job, finished, stderr)
+	}
+	if exit := exitCode(status, code, opts.StrictExit); exit != 0 {
+		if runErr == nil {
+			runErr = errRuleFailed
+		}
+		return &ExitError{Code: exit, Err: runErr}
 	}
 	return nil
 }

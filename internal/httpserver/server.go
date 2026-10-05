@@ -47,7 +47,7 @@ type Options struct {
 // page is the data every full page template receives.
 type page struct {
 	Title string
-	Tab   string // "jobs", "runs" or "logs"
+	Tab   string // "jobs", "runs", "logs" or "timeline"
 	Data  any
 }
 
@@ -81,6 +81,8 @@ func New(store *storage.Store, opts Options) (*Server, error) {
 		"seconds": func(n int64) string { return humanDuration(time.Duration(n) * time.Second) },
 		"shell":   shellCommand,
 		"join":    strings.Join,
+		"kb":      humanKB,
+		"ms":      func(ms int64) string { return humanDuration(time.Duration(ms) * time.Millisecond) },
 	}
 	t, err := template.New("").Funcs(funcs).ParseFS(assets, "templates/*.html")
 	if err != nil {
@@ -106,6 +108,7 @@ func New(store *storage.Store, opts Options) (*Server, error) {
 	r.Get("/runs", s.handleRuns)
 	r.Get("/runs/{id}", s.handleRun)
 	r.Get("/logs", s.handleLogs)
+	r.Get("/timeline", s.handleTimeline)
 	r.Get("/partials/dashboard", s.handleDashboardPartial)
 	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.FS(static))))
 	return s, nil
@@ -143,7 +146,7 @@ func (s *Server) loadDashboard(r *http.Request) (dashboard, error) {
 	}
 	d := dashboard{Jobs: jobs}
 	for _, j := range jobs {
-		if j.Status == "failed" && j.LastRun != nil && (d.Recent == nil || j.LastRun.StartedAt.After(d.Recent.Run.StartedAt)) {
+		if model.Failing(j.Status) && j.LastRun != nil && (d.Recent == nil || j.LastRun.StartedAt.After(d.Recent.Run.StartedAt)) {
 			d.Recent = &logExcerpt{Run: *j.LastRun, JobName: j.Name}
 		}
 	}
@@ -263,7 +266,7 @@ func (s *Server) loadRunEnv(r *http.Request, run model.Run) (*runEnv, error) {
 		return nil, err
 	}
 	re := &runEnv{Env: env}
-	if run.Status != "failed" {
+	if !model.Failing(run.Status) {
 		return re, nil
 	}
 	success, err := s.Store.LastSuccessWithEnvBefore(r.Context(), run.JobID, run.StartedAt)

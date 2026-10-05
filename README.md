@@ -20,6 +20,10 @@ record runs.
   `cronwatch try` reruns the job the way cron ran it.
 - **Missed-run detection.** A five-field cron schedule and grace period show
   when a job did not start on time.
+- **Failures your exit codes miss.** Mark runs failed when output matches a
+  pattern or a run takes too long, and keep overlapping runs from piling up.
+- **Alerts without new dependencies.** Run any command when a job starts
+  failing or recovers, or let cron email you a daily `cronwatch digest`.
 - **Local by default.** SQLite storage and a dashboard bound to
   `127.0.0.1:8765`; SSH forwarding covers remote servers.
 - **Single binary.** HTML, CSS, JavaScript, and database migrations are embedded.
@@ -77,6 +81,18 @@ jobs and logs; it cannot execute commands.
   lists what changed.
 - **Logs** searches the output of the last 50 runs; **Errors only** limits
   results to stderr lines.
+- **Timeline** shows every job's runs over the last 24 hours or 7 days, one row
+  per job, with expected run times and missed runs, so failures, gaps and jobs
+  that run at the same time stand out. Hover a mark for details; click it to
+  open the run.
+
+A run's page also shows why a run counts as failed when its exit code alone
+does not say (see [Deciding success](#deciding-success)), its peak memory and
+CPU time, and whether it started while an earlier run was still going.
+
+![The Timeline page: one row per job over the last 24 hours. Successful runs are short green bars, failures tall red bars, missed runs dashed yellow boxes, and small ticks mark expected run times.](docs/images/timeline.png)
+
+![A failed run's page. The last error is "pg_dump: command not found", and a notice lists what changed since the last successful run: PATH is missing /usr/local/pgsql/bin and /usr/local/bin, the shell and working directory differ, and LANG, PGPASSFILE and USER are not set.](docs/images/run-environment-change.png)
 
 ### Cron example
 
@@ -139,6 +155,7 @@ database. A user-level systemd service example is in
 | [`cronwatch sync`](#cronwatch-sync) | Register jobs from your crontab before they run |
 | [`cronwatch envdiff`](#cronwatch-envdiff) | Compare a run's environment with your shell |
 | [`cronwatch try`](#cronwatch-try) | Rerun a job in the environment cron gave it |
+| [`cronwatch digest`](#cronwatch-digest) | Summarize every job, for a daily email |
 | [`cronwatch prune`](#cronwatch-prune) | Delete old finished runs |
 | [`cronwatch version`](#cronwatch-version) | Print the version |
 
@@ -172,6 +189,15 @@ Backup written to /backups/db.sql.gz
 | `--grace DURATION` | How late a run may start before it counts as missed, e.g. `10m`. Default `5m`. |
 | `--max-log-bytes N` | Output kept per stream. Default 1 MiB, maximum 64 MiB. |
 | `--no-echo` | Record output without also printing it. |
+| `--ok-codes 3,4` | Exit codes besides 0 that count as success. |
+| `--fail-on-stderr` | Mark the run failed if the command writes anything to stderr. |
+| `--fail-if-match REGEXP` | Mark the run failed if its output matches, e.g. `'ERROR\|Traceback'`. |
+| `--success-if-match REGEXP` | Mark the run failed unless its output matches, e.g. `'Backup complete'`. |
+| `--timeout DURATION` | Stop the command after this long (SIGTERM, then SIGKILL 5s later) and record `timeout`. |
+| `--strict-exit` | Exit 0 for a successful run and nonzero for a failed one, even when the rules above disagree with the command's exit code. |
+| `--no-overlap` | Skip the run, and record it as `skipped`, if the job's previous run is still running. |
+| `--on-failure 'CMD'` | Shell command to run when the job starts failing. See [Notifications](#notifications). |
+| `--on-recover 'CMD'` | Shell command to run when the job succeeds again after failing. |
 
 `--schedule` and `--grace` only change the stored job when you pass them, so
 running a job by hand to test it does not reset its schedule.
@@ -189,6 +215,67 @@ environments are stored once.
 Different names that produce the same slug share one job; CronWatch prints a
 warning when that happens, and `--slug` keeps them apart.
 
+Each run also records its peak memory and CPU time.
+
+#### Deciding success
+
+Many scripts exit 0 when they fail. `--ok-codes`, `--fail-on-stderr`,
+`--fail-if-match` and `--success-if-match` let the output decide instead.
+Patterns are matched against stdout and stderr as captured, so with a small
+`--max-log-bytes` a match in the dropped middle is missed. When a rule marks a
+run failed, CronWatch prints why on stderr, and the run page shows it:
+
+```console
+$ cronwatch run --name "Database Backup" --fail-if-match 'ERROR' -- ./backup.sh
+ERROR: disk full
+cronwatch: failed: output matched --fail-if-match "ERROR": ERROR: disk full
+```
+
+By default `cronwatch run` still exits with the command's own code, so cron
+behaves exactly as before. Add `--strict-exit` to make the exit code follow the
+recorded status instead.
+
+`--timeout` records the run as `timeout` and exits with the command's code
+(143 for SIGTERM). `--no-overlap` exits 0 when it skips a run.
+
+CronWatch notices overlapping runs even without `--no-overlap`: a run that
+starts while the job's previous run is still going is marked on its page and
+outlined on the timeline.
+
+#### Notifications
+
+`--on-failure` runs a shell command when a job goes from OK to failing: a
+failed run, a timeout, or a missed scheduled run. `--on-recover` runs one when
+it succeeds again. A job that keeps failing alerts once, not on every run. The
+command gets the details in environment variables:
+
+| Variable | Value |
+| --- | --- |
+| `CRONWATCH_EVENT` | `failed`, `timeout`, `missed` or `recovered` |
+| `CRONWATCH_JOB_NAME`, `CRONWATCH_JOB_SLUG` | The job |
+| `CRONWATCH_STATUS`, `CRONWATCH_EXIT_CODE` | The run's status and exit code |
+| `CRONWATCH_REASON` | Why a rule marked the run failed, if one did |
+| `CRONWATCH_LAST_ERROR` | The last line the command wrote to stderr |
+| `CRONWATCH_RUN_ID`, `CRONWATCH_STARTED_AT` | The run, for `/runs/RUN-ID` on the dashboard |
+| `CRONWATCH_EXPECTED_AT` | For `missed`: when the run was due |
+| `CRONWATCH_HOST` | This machine's hostname |
+
+To alert on every job, set `CRONWATCH_ON_FAILURE` (and `CRONWATCH_ON_RECOVER`)
+at the top of your crontab instead of repeating the flag. A flag on a line
+takes precedence. Cron does not expand variables in these assignments, so the
+`$CRONWATCH_…` references reach the hook as written and are filled in when it
+runs. On a command line, single-quote the hook for the same reason, and escape
+any `%` as `\%`, because cron treats `%` in a command as a newline.
+
+```cron
+CRONWATCH_ON_FAILURE=curl -fsS -d "$CRONWATCH_JOB_NAME $CRONWATCH_EVENT: $CRONWATCH_LAST_ERROR" https://ntfy.sh/my-cron-alerts
+```
+
+Hooks run after the result is recorded, with a 30-second limit. A hook that
+fails or times out is reported on stderr and never changes the job's result.
+Missed runs are detected by `cronwatch serve` (or `jobs`, `runs`, `prune`), so
+their alerts need one of those running.
+
 ### `cronwatch serve`
 
 ```sh
@@ -199,7 +286,18 @@ Serves the dashboard at <http://127.0.0.1:8765>. It is read-only and has no
 login, so it only listens on loopback; reach it from another machine with
 `ssh -L 8765:localhost:8765 user@server`. Binding to another address requires
 `--public`. While running, it also registers jobs from your crontab
-([crontab sync](#crontab-sync)) and checks for missed runs every minute.
+([crontab sync](#crontab-sync)) and checks for missed runs every minute,
+running `--on-failure` hooks for jobs that start missing runs.
+
+```console
+$ cronwatch serve
+CronWatch UI: http://127.0.0.1:8765
+crontab sync: added Database Backup
+crontab sync: added Ingest queue
+```
+
+It keeps running until you stop it; the `crontab sync` lines appear when new
+crontab lines are registered.
 
 To start it at boot from cron:
 
@@ -219,8 +317,9 @@ Generate Reports  failed     2026-10-02 01:00  800ms
 Queue worker      never_run  —                 —
 ```
 
-Statuses: `success`, `failed`, `running`, `cancelled`, `missed` (a scheduled
-run never started), `never_run`, and `invalid_schedule`.
+Statuses: `success`, `failed`, `timeout`, `running`, `cancelled`, `skipped`
+(by `--no-overlap`), `missed` (a scheduled run never started), `never_run`, and
+`invalid_schedule`.
 
 ### `cronwatch runs`
 
@@ -318,6 +417,40 @@ ones set at the top of the crontab, are not set. Pass any the job needs with
 `--env NAME=VALUE` (repeatable); `FOO=bar cronwatch try` does not work,
 because `try` replaces the environment.
 
+### `cronwatch digest`
+
+```sh
+cronwatch digest [--since DURATION] [--quiet]
+```
+
+Prints a plain-text summary: the jobs that need attention now, and each job's
+runs, failures and missed runs over the period (default `24h`):
+
+```console
+$ cronwatch digest
+CronWatch digest for nebula-rain, Oct 4 11:24 to Oct 5 11:24
+
+Needs attention (2)
+  Database backup: failed Oct 5 02:00 (exit 1)
+  Tile staleness check: missed the run expected Oct 5 07:00
+
+JOB                   STATUS   RUNS  FAILED  MISSED  LAST RUN
+Database backup       failed   1     1       0       Oct 5 02:00
+Docker prune          success  0     0       0       Oct 4 04:30
+Ingest queue          running  46    4       2       Oct 5 11:00
+Report export         success  4     0       0       Oct 5 06:00
+Tile staleness check  missed   0     0       1       Oct 3 07:00
+```
+
+Cron emails a job's output to `MAILTO`, so a crontab line is enough for a daily
+report. With `--quiet` it prints nothing, and cron sends nothing, unless a job
+failed, timed out or missed a run in the period, or is failing now:
+
+```cron
+MAILTO=you@example.com
+0 8 * * * $HOME/.local/bin/cronwatch digest --quiet
+```
+
 ### `cronwatch prune`
 
 ```sh
@@ -346,8 +479,10 @@ v0.2.2
 minute, and registers every job a line runs through `cronwatch run`. Jobs
 appear on the dashboard as **Never run**, with their next expected time,
 before their first run. A line without `--schedule` uses its own cron
-schedule. Sync never deletes jobs, and it only corrects the schedule and grace
-period of existing jobs; names and commands come from real runs.
+schedule. Sync never deletes jobs, and it only corrects the schedule, grace
+period and hooks of existing jobs; names and commands come from real runs.
+Hooks come from the line's flags, or else from `CRONWATCH_ON_FAILURE` and
+`CRONWATCH_ON_RECOVER` in the crontab; removing those removes the hooks.
 
 Run `cronwatch sync` to do the same by hand. It also lists crontab lines that
 are not wrapped with `cronwatch run`, so you can see what is not monitored.

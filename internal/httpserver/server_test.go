@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yeboahd24/cronwatch/internal/model"
 	"github.com/yeboahd24/cronwatch/internal/runenv"
 	"github.com/yeboahd24/cronwatch/internal/storage"
 )
@@ -230,5 +231,114 @@ func TestRunPageShowsEnvironmentAndChangeSinceSuccess(t *testing.T) {
 	success := get("/runs/" + ids[0])
 	if strings.Contains(success, "Environment changed") || !strings.Contains(success, "<code>/opt/tool/bin:/usr/bin</code>") {
 		t.Fatalf("success run page:\n%s", success)
+	}
+}
+
+func TestRunPageShowsOutcomeDetails(t *testing.T) {
+	ctx := context.Background()
+	s, err := storage.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	job, err := s.UpsertJob(ctx, storage.JobSpec{Slug: "outcome", Name: "Outcome", Command: `"true"`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := s.CreateRun(ctx, job.ID, time.Now().Add(-time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.CreateRun(ctx, job.ID, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	zero := 0
+	if err := s.CompleteRun(ctx, second.ID, storage.Completion{Ended: time.Now(), Status: "failed", ExitCode: &zero,
+		Stdout: "ERROR: lost\n", Reason: `output matched --fail-if-match "ERROR": ERROR: lost`,
+		Usage: &model.Usage{MaxRSSKB: 43008, UserCPUMS: 1500, SysCPUMS: 20}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetRunOverlap(ctx, second.ID, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	server, err := New(s, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for path, wants := range map[string][]string{
+		"/runs/" + second.ID: {`<span class="error-label">Failed</span><span>output matched --fail-if-match &#34;ERROR&#34;: ERROR: lost</span>`,
+			"<dd>42 MB</dd>", "1.5s user, 20ms system", `<a href="/runs/` + first.ID + `">an earlier run</a> was still running`},
+		"/jobs/" + job.ID: {`<td data-label="Peak memory">42 MB</td>`},
+	} {
+		recorder := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Host = "localhost:8765"
+		server.Router.ServeHTTP(recorder, req)
+		for _, want := range wants {
+			if !strings.Contains(recorder.Body.String(), want) {
+				t.Fatalf("%s lacks %q:\n%s", path, want, recorder.Body.String())
+			}
+		}
+	}
+}
+
+func TestTimeline(t *testing.T) {
+	ctx := context.Background()
+	s, err := storage.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	expr, grace := "0 * * * *", time.Duration(0)
+	job, err := s.UpsertJob(ctx, storage.JobSpec{Slug: "hourly", Name: "Hourly", Command: `"true"`, Schedule: &expr, Grace: &grace})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	one := 1
+	for i, status := range []string{"success", "failed", "skipped"} {
+		run, err := s.CreateRun(ctx, job.ID, now.Add(time.Duration(i-3)*time.Hour))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.CompleteRun(ctx, run.ID, storage.Completion{Ended: now.Add(time.Duration(i-3)*time.Hour + time.Minute), Duration: time.Minute, Status: status, ExitCode: &one}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A run from before the 24-hour window is only on the 7-day view.
+	old, err := s.CreateRun(ctx, job.ID, now.Add(-48*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.FinishRun(ctx, old.ID, now.Add(-48*time.Hour), 0, "success", nil, "", "", "", false); err != nil {
+		t.Fatal(err)
+	}
+	server, err := New(s, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	get := func(path string) string {
+		recorder := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Host = "localhost:8765"
+		server.Router.ServeHTTP(recorder, req)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("%s: status %d", path, recorder.Code)
+		}
+		return recorder.Body.String()
+	}
+	day := get("/timeline")
+	for _, want := range []string{`class="tl-ok"`, `class="tl-fail" x=`, `class="tl-minor"`, "<title>Failed · ", " · 1m · exit 1</title>",
+		`aria-label="Hourly: 1 success, 1 failed, 1 skipped"`, `class="tl-expected"`, `aria-current="page">24 hours`} {
+		if !strings.Contains(day, want) {
+			t.Fatalf("24h timeline lacks %q:\n%s", want, day)
+		}
+	}
+	if week := get("/timeline?range=7d"); !strings.Contains(week, `aria-label="Hourly: 2 success, 1 failed, 1 skipped"`) {
+		t.Fatalf("7d timeline:\n%s", week)
+	}
+	if bad := get("/timeline?range=nonsense"); !strings.Contains(bad, `aria-current="page">24 hours`) {
+		t.Fatal("unknown range did not fall back to 24 hours")
 	}
 }

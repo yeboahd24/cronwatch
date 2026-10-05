@@ -31,7 +31,8 @@ func timestamp(t time.Time) string              { return t.UTC().Format("2006-01
 func parseTime(value string) (time.Time, error) { return time.Parse(time.RFC3339Nano, value) }
 
 func convertJob(row db.Job) (model.Job, error) {
-	j := model.Job{ID: row.ID, Slug: row.Slug, Name: row.Name, Command: row.Command, GraceSeconds: row.GraceSeconds}
+	j := model.Job{ID: row.ID, Slug: row.Slug, Name: row.Name, Command: row.Command, GraceSeconds: row.GraceSeconds,
+		OnFailure: row.OnFailure.String, OnRecover: row.OnRecover.String}
 	if row.Schedule.Valid {
 		j.Schedule = &row.Schedule.String
 	}
@@ -54,7 +55,11 @@ func convertJob(row db.Job) (model.Job, error) {
 	return j, nil
 }
 func convertRun(row db.Run) (model.Run, error) {
-	r := model.Run{ID: row.ID, JobID: row.JobID, Status: row.Status, Stdout: row.Stdout, Stderr: row.Stderr, CombinedLog: row.CombinedLog, Truncated: row.Truncated != 0, EnvHash: row.EnvHash.String}
+	r := model.Run{ID: row.ID, JobID: row.JobID, Status: row.Status, Stdout: row.Stdout, Stderr: row.Stderr, CombinedLog: row.CombinedLog, Truncated: row.Truncated != 0, EnvHash: row.EnvHash.String,
+		Reason: row.Reason.String, OverlappedRunID: row.OverlappedRunID.String}
+	if row.MaxRssKb.Valid {
+		r.Usage = &model.Usage{MaxRSSKB: row.MaxRssKb.Int64, UserCPUMS: row.UserCpuMs.Int64, SysCPUMS: row.SysCpuMs.Int64}
+	}
 	var err error
 	r.StartedAt, err = parseTime(row.StartedAt)
 	if err != nil {
@@ -85,12 +90,13 @@ func convertRun(row db.Run) (model.Run, error) {
 // DefaultGrace is the missed-run grace period for jobs that never set one.
 const DefaultGrace = 5 * time.Minute
 
-// JobSpec describes a job registration. A nil Schedule or Grace keeps the
-// stored value, so an ad-hoc run without flags does not reset the job.
+// JobSpec describes a job registration. A nil Schedule, Grace or hook keeps
+// the stored value, so an ad-hoc run without flags does not reset the job.
 type JobSpec struct {
-	Slug, Name, Command string
-	Schedule            *string
-	Grace               *time.Duration
+	Slug, Name, Command  string
+	Schedule             *string
+	Grace                *time.Duration
+	OnFailure, OnRecover *string
 }
 
 func (s *Store) UpsertJob(ctx context.Context, spec JobSpec) (model.Job, error) {
@@ -99,7 +105,8 @@ func (s *Store) UpsertJob(ctx context.Context, spec JobSpec) (model.Job, error) 
 		return model.Job{}, err
 	}
 	expression, grace := "", DefaultGrace
-	if spec.Schedule == nil || spec.Grace == nil {
+	var onFailure, onRecover string
+	if spec.Schedule == nil || spec.Grace == nil || spec.OnFailure == nil || spec.OnRecover == nil {
 		existing, err := s.GetJobBySlug(ctx, spec.Slug)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return model.Job{}, err
@@ -109,7 +116,14 @@ func (s *Store) UpsertJob(ctx context.Context, spec JobSpec) (model.Job, error) 
 				expression = *existing.Schedule
 			}
 			grace = time.Duration(existing.GraceSeconds) * time.Second
+			onFailure, onRecover = existing.OnFailure, existing.OnRecover
 		}
+	}
+	if spec.OnFailure != nil {
+		onFailure = *spec.OnFailure
+	}
+	if spec.OnRecover != nil {
+		onRecover = *spec.OnRecover
 	}
 	if spec.Schedule != nil {
 		expression = *spec.Schedule
@@ -119,7 +133,9 @@ func (s *Store) UpsertJob(ctx context.Context, spec JobSpec) (model.Job, error) 
 	}
 	now := timestamp(time.Now())
 	err = db.New(s.DB).UpsertJob(ctx, db.UpsertJobParams{ID: id, Slug: spec.Slug, Name: spec.Name, Command: spec.Command,
-		Schedule: sql.NullString{String: expression, Valid: expression != ""}, GraceSeconds: int64(grace / time.Second), CreatedAt: now, UpdatedAt: now})
+		Schedule: sql.NullString{String: expression, Valid: expression != ""}, GraceSeconds: int64(grace / time.Second),
+		OnFailure: sql.NullString{String: onFailure, Valid: onFailure != ""}, OnRecover: sql.NullString{String: onRecover, Valid: onRecover != ""},
+		CreatedAt: now, UpdatedAt: now})
 	if err != nil {
 		return model.Job{}, err
 	}
@@ -168,17 +184,42 @@ func (s *Store) CreateRun(ctx context.Context, jobID string, started time.Time) 
 	return s.GetRun(ctx, id)
 }
 func (s *Store) FinishRun(ctx context.Context, id string, ended time.Time, duration time.Duration, status string, exitCode *int, stdout, stderr, combined string, truncated bool) error {
+	return s.CompleteRun(ctx, id, Completion{Ended: ended, Duration: duration, Status: status, ExitCode: exitCode,
+		Stdout: stdout, Stderr: stderr, Combined: combined, Truncated: truncated})
+}
+
+// Completion is the final state of a run.
+type Completion struct {
+	Ended                    time.Time
+	Duration                 time.Duration
+	Status                   string
+	ExitCode                 *int
+	Stdout, Stderr, Combined string
+	Truncated                bool
+	Reason                   string
+	Usage                    *model.Usage
+}
+
+// CompleteRun records the result of a running run.
+func (s *Store) CompleteRun(ctx context.Context, id string, c Completion) error {
 	code := sql.NullInt64{}
-	if exitCode != nil {
-		code = sql.NullInt64{Int64: int64(*exitCode), Valid: true}
+	if c.ExitCode != nil {
+		code = sql.NullInt64{Int64: int64(*c.ExitCode), Valid: true}
 	}
 	truncatedInt := int64(0)
-	if truncated {
+	if c.Truncated {
 		truncatedInt = 1
 	}
-	n, err := db.New(s.DB).FinishRun(ctx, db.FinishRunParams{ID: id, EndedAt: sql.NullString{String: timestamp(ended), Valid: true},
-		DurationMs: sql.NullInt64{Int64: duration.Milliseconds(), Valid: true}, Status: status, ExitCode: code,
-		Stdout: stdout, Stderr: stderr, CombinedLog: combined, Truncated: truncatedInt})
+	params := db.FinishRunParams{ID: id, EndedAt: sql.NullString{String: timestamp(c.Ended), Valid: true},
+		DurationMs: sql.NullInt64{Int64: c.Duration.Milliseconds(), Valid: true}, Status: c.Status, ExitCode: code,
+		Stdout: c.Stdout, Stderr: c.Stderr, CombinedLog: c.Combined, Truncated: truncatedInt,
+		Reason: sql.NullString{String: c.Reason, Valid: c.Reason != ""}}
+	if u := c.Usage; u != nil {
+		params.MaxRssKb = sql.NullInt64{Int64: u.MaxRSSKB, Valid: true}
+		params.UserCpuMs = sql.NullInt64{Int64: u.UserCPUMS, Valid: true}
+		params.SysCpuMs = sql.NullInt64{Int64: u.SysCPUMS, Valid: true}
+	}
+	n, err := db.New(s.DB).FinishRun(ctx, params)
 	if err != nil {
 		return err
 	}
