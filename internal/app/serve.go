@@ -32,6 +32,7 @@ func serveCommand(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		"Serve the read-only dashboard, register jobs from your crontab, and check for missed runs.")
 	addr := fs.String("addr", "127.0.0.1:8765", "HTTP listen address")
 	public := fs.Bool("public", false, "allow non-loopback bind")
+	metrics := fs.Bool("metrics", false, "serve Prometheus metrics at /metrics")
 	dataDir := fs.String("data-dir", "", "data directory")
 	syncTab := fs.Bool("sync-crontab", true, "register jobs found in the user's crontab")
 	if err := parseFlags(fs, args, stdout); err != nil {
@@ -58,7 +59,7 @@ func serveCommand(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		return err
 	}
 	defer s.Close()
-	web, err := httpserver.New(s, httpserver.Options{AnyHost: *public})
+	web, err := httpserver.New(s, httpserver.Options{AnyHost: *public, Metrics: *metrics})
 	if err != nil {
 		return err
 	}

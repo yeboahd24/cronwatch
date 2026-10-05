@@ -44,6 +44,8 @@ type Options struct {
 	// AnyHost disables the loopback Host-header check, for --public servers
 	// reached through a real hostname.
 	AnyHost bool
+	// Metrics serves Prometheus metrics at /metrics.
+	Metrics bool
 }
 
 // page is the data every full page template receives.
@@ -112,8 +114,12 @@ func New(store *storage.Store, opts Options) (*Server, error) {
 	r.Get("/jobs/{id}", s.handleJob)
 	r.Get("/runs", s.handleRuns)
 	r.Get("/runs/{id}", s.handleRun)
+	r.Get("/runs/{id}/log", s.handleRunLog)
 	r.Get("/logs", s.handleLogs)
 	r.Get("/timeline", s.handleTimeline)
+	if opts.Metrics {
+		r.Get("/metrics", s.handleMetrics)
+	}
 	r.Get("/partials/dashboard", s.handleDashboardPartial)
 	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.FS(static))))
 	return s, nil
@@ -341,6 +347,32 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 		History     *storage.FailureHistory
 		Slow        *durations.Slowness
 	}{run, job, stream, lines, logs.LastError(stderr), env, success, compare, history, slow}})
+}
+
+// handleRunLog serves a run's output as a plain-text download: the combined
+// log without stream marks, or one stream with ?stream=stdout|stderr.
+func (s *Server) handleRunLog(w http.ResponseWriter, r *http.Request) {
+	run, err := s.Store.GetRun(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		queryError(w, err)
+		return
+	}
+	job, err := s.Store.GetJob(r.Context(), run.JobID)
+	if err != nil {
+		queryError(w, err)
+		return
+	}
+	text, suffix := logs.Plain(run.CombinedLog), ""
+	switch stream := r.URL.Query().Get("stream"); stream {
+	case "stdout":
+		text, suffix = run.Stdout, "-stdout"
+	case "stderr":
+		text, suffix = run.Stderr, "-stderr"
+	}
+	name := fmt.Sprintf("%s-%s%s.log", job.Slug, run.StartedAt.Local().Format("20060102-150405"), suffix)
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
+	_, _ = w.Write([]byte(text))
 }
 
 // compareLines caps each list on the comparison view; logs can be long.

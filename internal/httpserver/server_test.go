@@ -563,3 +563,104 @@ func TestCrontabHistoryOnJobPageAndTimeline(t *testing.T) {
 		t.Fatalf("timeline lacks the change marker:\n%s", timeline)
 	}
 }
+
+func TestRunLogDownload(t *testing.T) {
+	ctx := context.Background()
+	s, err := storage.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	job, err := s.UpsertJob(ctx, storage.JobSpec{Slug: "backup", Name: "Backup", Command: `"true"`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := s.CreateRun(ctx, job.ID, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.FinishRun(ctx, run.ID, time.Now(), time.Second, "failed", nil, "out\n", "boom\n", "out\n\x02boom\n", false); err != nil {
+		t.Fatal(err)
+	}
+	server, err := New(s, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for query, want := range map[string]string{"": "out\nboom\n", "?stream=stdout": "out\n", "?stream=stderr": "boom\n"} {
+		recorder := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/runs/"+run.ID+"/log"+query, nil)
+		req.Host = "localhost:8765"
+		server.Router.ServeHTTP(recorder, req)
+		if recorder.Code != http.StatusOK || recorder.Body.String() != want {
+			t.Fatalf("%q: %d %q", query, recorder.Code, recorder.Body.String())
+		}
+		disposition := recorder.Header().Get("Content-Disposition")
+		if !strings.HasPrefix(disposition, `attachment; filename="backup-`) || !strings.HasSuffix(disposition, `.log"`) {
+			t.Fatalf("Content-Disposition = %q", disposition)
+		}
+		if recorder.Header().Get("Content-Type") != "text/plain; charset=utf-8" {
+			t.Fatalf("Content-Type = %q", recorder.Header().Get("Content-Type"))
+		}
+	}
+}
+
+func TestMetrics(t *testing.T) {
+	ctx := context.Background()
+	s, err := storage.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	expr := "0 2 * * *"
+	job, err := s.UpsertJob(ctx, storage.JobSpec{Slug: "backup", Name: `DB "main" backup`, Command: `"true"`, Schedule: &expr})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpsertJob(ctx, storage.JobSpec{Slug: "never", Name: "Never", Command: `"true"`}); err != nil {
+		t.Fatal(err)
+	}
+	started := time.Unix(1_760_000_000, 0)
+	two := 2
+	run, err := s.CreateRun(ctx, job.ID, started)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CompleteRun(ctx, run.ID, storage.Completion{Ended: started.Add(1500 * time.Millisecond), Duration: 1500 * time.Millisecond, Status: "failed", ExitCode: &two}); err != nil {
+		t.Fatal(err)
+	}
+	get := func(opts Options) *httptest.ResponseRecorder {
+		server, err := New(s, opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		recorder := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+		req.Host = "localhost:8765"
+		server.Router.ServeHTTP(recorder, req)
+		return recorder
+	}
+	if rec := get(Options{}); rec.Code != http.StatusNotFound {
+		t.Fatalf("/metrics without --metrics: %d", rec.Code)
+	}
+	rec := get(Options{Metrics: true})
+	body := rec.Body.String()
+	for _, want := range []string{
+		"# TYPE cronwatch_job_failing gauge\n",
+		`cronwatch_job_info{job="backup",name="DB \"main\" backup",schedule="0 2 * * *",status="failed"} 1`,
+		`cronwatch_job_failing{job="backup"} 1`, `cronwatch_job_failing{job="never"} 0`,
+		`cronwatch_job_last_run_timestamp_seconds{job="backup"} 1760000000`,
+		`cronwatch_job_last_run_duration_seconds{job="backup"} 1.5`,
+		`cronwatch_job_last_run_exit_code{job="backup"} 2`,
+		`cronwatch_job_next_expected_timestamp_seconds{job="backup"} `,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("metrics lack %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, `cronwatch_job_last_success_timestamp_seconds{`) || strings.Contains(body, `last_run_timestamp_seconds{job="never"}`) {
+		t.Fatalf("unknown values were reported:\n%s", body)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/plain; version=0.0.4") {
+		t.Fatalf("Content-Type = %q", ct)
+	}
+}

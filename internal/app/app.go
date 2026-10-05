@@ -82,6 +82,10 @@ func dispatch(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		return digestCommand(ctx, args[1:], stdout)
 	case "crontab-history":
 		return crontabHistoryCommand(ctx, args[1:], stdout)
+	case "check":
+		return checkCommand(ctx, args[1:], stdout)
+	case "ping":
+		return pingCommand(ctx, args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		// "cronwatch help run" shows the help for one command.
 		if len(args) > 1 && args[1] != "help" && !strings.HasPrefix(args[1], "-") {
@@ -108,6 +112,8 @@ Usage:
   cronwatch try JOB-SLUG | --run RUN-ID
   cronwatch digest [--since DURATION] [--quiet]
   cronwatch crontab-history [--limit N] [JOB-SLUG]
+  cronwatch check [JOB-SLUG...]
+  cronwatch ping [--start | --fail] JOB-SLUG
   cronwatch version
 
 Run "cronwatch COMMAND --help" for a command's flags.`)

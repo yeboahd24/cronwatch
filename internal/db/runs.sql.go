@@ -281,6 +281,41 @@ func (q *Queries) LastSuccessWithEnvBefore(ctx context.Context, arg LastSuccessW
 	return i, err
 }
 
+const latestOwnerlessRunningRun = `-- name: LatestOwnerlessRunningRun :one
+SELECT id, job_id, started_at, ended_at, duration_ms, status, exit_code, stdout, stderr, combined_log, truncated, created_at, pid, host, env_hash, reason, overlapped_run_id, max_rss_kb, user_cpu_ms, sys_cpu_ms, failure_signature FROM runs WHERE job_id = ? AND status = 'running' AND pid IS NULL
+ORDER BY started_at DESC LIMIT 1
+`
+
+// The newest heartbeat run still waiting for its end ping.
+func (q *Queries) LatestOwnerlessRunningRun(ctx context.Context, jobID string) (Run, error) {
+	row := q.db.QueryRowContext(ctx, latestOwnerlessRunningRun, jobID)
+	var i Run
+	err := row.Scan(
+		&i.ID,
+		&i.JobID,
+		&i.StartedAt,
+		&i.EndedAt,
+		&i.DurationMs,
+		&i.Status,
+		&i.ExitCode,
+		&i.Stdout,
+		&i.Stderr,
+		&i.CombinedLog,
+		&i.Truncated,
+		&i.CreatedAt,
+		&i.Pid,
+		&i.Host,
+		&i.EnvHash,
+		&i.Reason,
+		&i.OverlappedRunID,
+		&i.MaxRssKb,
+		&i.UserCpuMs,
+		&i.SysCpuMs,
+		&i.FailureSignature,
+	)
+	return i, err
+}
+
 const latestRunWithEnv = `-- name: LatestRunWithEnv :one
 SELECT id, job_id, started_at, ended_at, duration_ms, status, exit_code, stdout, stderr, combined_log, truncated, created_at, pid, host, env_hash, reason, overlapped_run_id, max_rss_kb, user_cpu_ms, sys_cpu_ms, failure_signature FROM runs WHERE job_id = ? AND env_hash IS NOT NULL
 ORDER BY started_at DESC LIMIT 1

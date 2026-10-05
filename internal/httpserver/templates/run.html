@@ -37,6 +37,7 @@
 </section>
 <div class="section-head">
   <h2>Output</h2>
+  <div class="section-tools">
   <nav class="segmented" aria-label="Output stream">
     <a href="?stream=all"{{if eq .Stream "all"}} aria-current="page"{{end}}>All</a>
     <a href="?stream=stdout"{{if eq .Stream "stdout"}} aria-current="page"{{end}}>Stdout</a>
@@ -45,6 +46,8 @@
     <a href="?stream=compare"{{if eq .Stream "compare"}} aria-current="page"{{end}}>vs last success</a>
     {{- end}}
   </nav>
+  <a class="download" href="/runs/{{.Run.ID}}/log{{if or (eq .Stream "stdout") (eq .Stream "stderr")}}?stream={{.Stream}}{{end}}" download>Download</a>
+  </div>
 </div>
 {{with .Compare}}
 <p class="compare-intro">Compared with the <a href="/runs/{{.Success.ID}}">last successful run</a> {{template "time" .Success.StartedAt}}. Lines are matched ignoring numbers, times, IDs and <code>/tmp</code> paths.</p>

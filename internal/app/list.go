@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/yeboahd24/cronwatch/internal/config"
+	"github.com/yeboahd24/cronwatch/internal/model"
 	"github.com/yeboahd24/cronwatch/internal/storage"
 )
 
@@ -35,6 +36,7 @@ func openForList(ctx context.Context, dir string) (*storage.Store, error) {
 func jobsCommand(ctx context.Context, args []string, stdout io.Writer) error {
 	fs := newFlagSet("jobs", "cronwatch jobs [flags]", "List every job with its current status.")
 	dir := fs.String("data-dir", "", "data directory")
+	asJSON := fs.Bool("json", false, "print a JSON array instead of a table")
 	if err := parseFlags(fs, args, stdout); err != nil {
 		return err
 	}
@@ -49,6 +51,13 @@ func jobsCommand(ctx context.Context, args []string, stdout io.Writer) error {
 	views, err := s.ListJobViews(ctx, time.Now())
 	if err != nil {
 		return err
+	}
+	if *asJSON {
+		out := make([]jsonJob, 0, len(views))
+		for _, v := range views {
+			out = append(out, newJSONJob(v))
+		}
+		return writeJSON(stdout, out)
 	}
 	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "NAME\tSTATUS\tLAST RUN\tDURATION")
@@ -68,6 +77,7 @@ func jobsCommand(ctx context.Context, args []string, stdout io.Writer) error {
 func runsCommand(ctx context.Context, args []string, stdout io.Writer) error {
 	fs := newFlagSet("runs", "cronwatch runs [flags] [job-slug]", "List the 100 most recent runs, optionally for one job.")
 	dir := fs.String("data-dir", "", "data directory")
+	asJSON := fs.Bool("json", false, "print a JSON array instead of a table")
 	if err := parseFlags(fs, args, stdout); err != nil {
 		return err
 	}
@@ -79,24 +89,22 @@ func runsCommand(ctx context.Context, args []string, stdout io.Writer) error {
 		return err
 	}
 	defer s.Close()
-	var runs []struct {
-		ID, Name, Status string
-		StartedAt        time.Time
+	jobs, err := s.ListJobs(ctx)
+	if err != nil {
+		return err
 	}
+	byID := map[string]model.Job{}
+	for _, j := range jobs {
+		byID[j.ID] = j
+	}
+	var runs []model.Run
 	if fs.NArg() == 1 {
 		job, err := s.GetJobBySlug(ctx, fs.Arg(0))
 		if err != nil {
 			return err
 		}
-		items, err := s.ListRunsForJob(ctx, job.ID, 100)
-		if err != nil {
+		if runs, err = s.ListRunsForJob(ctx, job.ID, 100); err != nil {
 			return err
-		}
-		for _, r := range items {
-			runs = append(runs, struct {
-				ID, Name, Status string
-				StartedAt        time.Time
-			}{r.ID, job.Name, r.Status, r.StartedAt})
 		}
 	} else {
 		items, err := s.ListRunsWithJob(ctx, 100)
@@ -104,16 +112,20 @@ func runsCommand(ctx context.Context, args []string, stdout io.Writer) error {
 			return err
 		}
 		for _, r := range items {
-			runs = append(runs, struct {
-				ID, Name, Status string
-				StartedAt        time.Time
-			}{r.Run.ID, r.JobName, r.Run.Status, r.Run.StartedAt})
+			runs = append(runs, r.Run)
 		}
+	}
+	if *asJSON {
+		out := make([]jsonRun, 0, len(runs))
+		for _, r := range runs {
+			out = append(out, newJSONRun(r, byID[r.JobID]))
+		}
+		return writeJSON(stdout, out)
 	}
 	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "RUN ID\tJOB\tSTATUS\tSTARTED")
 	for _, r := range runs {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", r.ID, r.Name, r.Status, r.StartedAt.Local().Format("2006-01-02 15:04:05"))
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", r.ID, byID[r.JobID].Name, r.Status, r.StartedAt.Local().Format("2006-01-02 15:04:05"))
 	}
 	return w.Flush()
 }

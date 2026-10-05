@@ -362,6 +362,10 @@ code, pre { font-family: var(--mono); font-size: 13px; }
 .more a { color: var(--muted); }
 .more a:hover { color: var(--success); }
 
+.section-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.download { padding: 6px 12px; border: 1px solid var(--border); border-radius: 10px; color: var(--muted); text-decoration: none; font-size: 14px; }
+.download:hover { color: var(--text); border-color: var(--muted); }
+
 /* Durations */
 
 .cell-duration > span { display: block; }

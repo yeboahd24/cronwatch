@@ -121,3 +121,8 @@ ORDER BY started_at;
 SELECT id, started_at, duration_ms, status FROM runs
 WHERE job_id = ? AND status NOT IN ('running', 'skipped') AND duration_ms IS NOT NULL
 ORDER BY started_at DESC LIMIT ?;
+
+-- name: LatestOwnerlessRunningRun :one
+-- The newest heartbeat run still waiting for its end ping.
+SELECT * FROM runs WHERE job_id = ? AND status = 'running' AND pid IS NULL
+ORDER BY started_at DESC LIMIT 1;

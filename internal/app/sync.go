@@ -160,6 +160,7 @@ func syncCommand(ctx context.Context, args []string, stdout io.Writer) error {
 		"Register the jobs your crontab runs through \"cronwatch run\", and list lines that are not monitored.")
 	dir := fs.String("data-dir", "", "data directory")
 	file := fs.String("crontab", "", "read this crontab `file` instead of \"crontab -l\" (- for stdin)")
+	asJSON := fs.Bool("json", false, "print the result as JSON")
 	if err := parseFlags(fs, args, stdout); err != nil {
 		return err
 	}
@@ -200,6 +201,9 @@ func syncCommand(ctx context.Context, args []string, stdout io.Writer) error {
 		if result.Changes, err = recordCrontab(ctx, s, text, time.Now()); err != nil {
 			return err
 		}
+	}
+	if *asJSON {
+		return writeJSON(stdout, newJSONSync(result))
 	}
 	printSyncResult(stdout, result)
 	return nil

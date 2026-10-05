@@ -96,7 +96,8 @@ jobs and logs; it cannot execute commands.
   was first seen; a job's page lists each failure type with its count, first
   and last time.
 - **Logs** searches the output of the last 50 runs; **Errors only** limits
-  results to stderr lines.
+  results to stderr lines. A run's page has a **Download** link for its
+  output as a `.log` file (the whole output, or the stream you are viewing).
 - **Timeline** shows every job's runs over the last 24 hours or 7 days, one row
   per job, with expected run times and missed runs, so failures, gaps and jobs
   that run at the same time stand out. Hover a mark for details; click it to
@@ -173,6 +174,8 @@ database. A user-level systemd service example is in
 | [`cronwatch try`](#cronwatch-try) | Rerun a job in the environment cron gave it |
 | [`cronwatch digest`](#cronwatch-digest) | Summarize every job, for a daily email |
 | [`cronwatch crontab-history`](#cronwatch-crontab-history) | List changes to your crontab |
+| [`cronwatch ping`](#cronwatch-ping) | Record a run of a job you cannot wrap |
+| [`cronwatch check`](#cronwatch-check) | One status line and exit code for monitoring systems |
 | [`cronwatch prune`](#cronwatch-prune) | Delete old finished runs |
 | [`cronwatch version`](#cronwatch-version) | Print the version |
 
@@ -316,6 +319,17 @@ crontab sync: added Ingest queue
 It keeps running until you stop it; the `crontab sync` lines appear when new
 crontab lines are registered.
 
+`--metrics` also serves Prometheus metrics at `/metrics`, one series per job
+(labelled `job="SLUG"`): `cronwatch_job_failing` and `cronwatch_job_missed`
+(1 or 0), `cronwatch_job_last_run_timestamp_seconds`,
+`cronwatch_job_last_run_duration_seconds`, `cronwatch_job_last_run_exit_code`,
+`cronwatch_job_last_success_timestamp_seconds`,
+`cronwatch_job_next_expected_timestamp_seconds`, and `cronwatch_job_info`
+(always 1, with the name, schedule and status as labels). An alert such as
+`time() - cronwatch_job_last_success_timestamp_seconds > 86400` catches a job
+that has not succeeded for a day. Metrics follow the same loopback rule as
+the dashboard.
+
 To start it at boot from cron:
 
 ```cron
@@ -337,6 +351,36 @@ Queue worker      never_run  —                 —
 Statuses: `success`, `failed`, `timeout`, `running`, `cancelled`, `skipped`
 (by `--no-overlap`), `missed` (a scheduled run never started), `never_run`, and
 `invalid_schedule`.
+
+`--json` prints the jobs as JSON for scripts. Field names are stable, times are
+RFC 3339 in UTC, and missing values are `null`:
+
+```console
+$ cronwatch jobs --json
+[
+  {
+    "slug": "database-backup",
+    "name": "Database Backup",
+    "status": "failed",
+    "schedule": "0 2 * * *",
+    "grace_seconds": 300,
+    "last_run": {
+      "id": "fa46bf4ecf0a55ec3b1289236bca48e5",
+      "job": "Database Backup",
+      "job_slug": "database-backup",
+      "status": "failed",
+      "started_at": "2026-10-05T02:00:01.995990733Z",
+      "ended_at": "2026-10-05T02:00:42.997502931Z",
+      "duration_ms": 41001,
+      "exit_code": 1
+    },
+    "next_expected_at": "2026-10-06T02:00:00Z",
+    "missed_at": null
+  }
+]
+```
+
+`cronwatch runs --json` and `cronwatch sync --json` work the same way.
 
 ### `cronwatch runs`
 
@@ -498,6 +542,54 @@ variables whose names look secret (containing `KEY`, `TOKEN`, `SECRET`,
 still noticed, but never stored. Secrets written inside commands are stored as
 written. `sync --crontab FILE` registers jobs from the file without recording
 it, and `prune --older-than` deletes old copies but always keeps the newest.
+
+### `cronwatch ping`
+
+```sh
+cronwatch ping [--start | --fail] [--message TEXT] [--exit-code N] JOB-SLUG
+```
+
+Records a run of a job that cannot be wrapped with `cronwatch run`, such as a
+step inside a long script or a job started by another scheduler. A ping
+records a successful run. Ping with `--start` when the work begins and without
+it when it ends, and the run's duration is measured between the two:
+
+```sh
+cronwatch ping --start nightly-etl
+./extract && ./transform && ./load \
+  && cronwatch ping --message "loaded $ROWS rows" nightly-etl \
+  || cronwatch ping --fail --message "ETL failed" nightly-etl
+```
+
+The job is created on its first ping; pass `--name`, `--schedule` and
+`--grace` to name it and to have missed pings detected. Hooks, failure types
+and the dashboard treat pinged runs like wrapped ones. A `--start` that never
+gets its end ping stays **running** until the next `--start`, which records
+it as failed.
+
+### `cronwatch check`
+
+```sh
+cronwatch check [JOB-SLUG...]
+```
+
+Prints one status line and exits like a Nagios plugin, for Nagios, Icinga,
+Zabbix or any monitor that runs a command: 0 OK; 1 WARNING (a last run was
+unusually slow, or a job is getting slower); 2 CRITICAL (a job failed, timed
+out, missed a run or has an impossible schedule); 3 UNKNOWN. It checks every
+job unless given slugs. The text after `|` is performance data, and each
+problem gets a line of its own:
+
+```console
+$ cronwatch check
+CRONWATCH CRITICAL - Database Backup failed | jobs=2 critical=1 warning=0 ok=1
+CRITICAL: Database Backup: failed 2026-10-05 02:00: pg_dump: connection refused
+$ echo $?
+2
+```
+
+Over SSH, a remote monitor can run
+`ssh server .local/bin/cronwatch check` and use its exit code.
 
 ### `cronwatch prune`
 
