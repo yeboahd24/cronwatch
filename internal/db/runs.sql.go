@@ -102,7 +102,7 @@ func (q *Queries) FinishRun(ctx context.Context, arg FinishRunParams) (int64, er
 }
 
 const getRun = `-- name: GetRun :one
-SELECT id, job_id, started_at, ended_at, duration_ms, status, exit_code, stdout, stderr, combined_log, truncated, created_at, pid, host FROM runs WHERE id = ?
+SELECT id, job_id, started_at, ended_at, duration_ms, status, exit_code, stdout, stderr, combined_log, truncated, created_at, pid, host, env_hash FROM runs WHERE id = ?
 `
 
 func (q *Queries) GetRun(ctx context.Context, id string) (Run, error) {
@@ -123,6 +123,69 @@ func (q *Queries) GetRun(ctx context.Context, id string) (Run, error) {
 		&i.CreatedAt,
 		&i.Pid,
 		&i.Host,
+		&i.EnvHash,
+	)
+	return i, err
+}
+
+const lastSuccessWithEnvBefore = `-- name: LastSuccessWithEnvBefore :one
+SELECT id, job_id, started_at, ended_at, duration_ms, status, exit_code, stdout, stderr, combined_log, truncated, created_at, pid, host, env_hash FROM runs
+WHERE job_id = ? AND status = 'success' AND env_hash IS NOT NULL AND started_at < ?
+ORDER BY started_at DESC LIMIT 1
+`
+
+type LastSuccessWithEnvBeforeParams struct {
+	JobID     string
+	StartedAt string
+}
+
+func (q *Queries) LastSuccessWithEnvBefore(ctx context.Context, arg LastSuccessWithEnvBeforeParams) (Run, error) {
+	row := q.db.QueryRowContext(ctx, lastSuccessWithEnvBefore, arg.JobID, arg.StartedAt)
+	var i Run
+	err := row.Scan(
+		&i.ID,
+		&i.JobID,
+		&i.StartedAt,
+		&i.EndedAt,
+		&i.DurationMs,
+		&i.Status,
+		&i.ExitCode,
+		&i.Stdout,
+		&i.Stderr,
+		&i.CombinedLog,
+		&i.Truncated,
+		&i.CreatedAt,
+		&i.Pid,
+		&i.Host,
+		&i.EnvHash,
+	)
+	return i, err
+}
+
+const latestRunWithEnv = `-- name: LatestRunWithEnv :one
+SELECT id, job_id, started_at, ended_at, duration_ms, status, exit_code, stdout, stderr, combined_log, truncated, created_at, pid, host, env_hash FROM runs WHERE job_id = ? AND env_hash IS NOT NULL
+ORDER BY started_at DESC LIMIT 1
+`
+
+func (q *Queries) LatestRunWithEnv(ctx context.Context, jobID string) (Run, error) {
+	row := q.db.QueryRowContext(ctx, latestRunWithEnv, jobID)
+	var i Run
+	err := row.Scan(
+		&i.ID,
+		&i.JobID,
+		&i.StartedAt,
+		&i.EndedAt,
+		&i.DurationMs,
+		&i.Status,
+		&i.ExitCode,
+		&i.Stdout,
+		&i.Stderr,
+		&i.CombinedLog,
+		&i.Truncated,
+		&i.CreatedAt,
+		&i.Pid,
+		&i.Host,
+		&i.EnvHash,
 	)
 	return i, err
 }
@@ -160,7 +223,7 @@ func (q *Queries) ListRunStartsSince(ctx context.Context, arg ListRunStartsSince
 }
 
 const listRunningRuns = `-- name: ListRunningRuns :many
-SELECT id, job_id, started_at, ended_at, duration_ms, status, exit_code, stdout, stderr, combined_log, truncated, created_at, pid, host FROM runs WHERE status = 'running'
+SELECT id, job_id, started_at, ended_at, duration_ms, status, exit_code, stdout, stderr, combined_log, truncated, created_at, pid, host, env_hash FROM runs WHERE status = 'running'
 `
 
 func (q *Queries) ListRunningRuns(ctx context.Context) ([]Run, error) {
@@ -187,6 +250,7 @@ func (q *Queries) ListRunningRuns(ctx context.Context) ([]Run, error) {
 			&i.CreatedAt,
 			&i.Pid,
 			&i.Host,
+			&i.EnvHash,
 		); err != nil {
 			return nil, err
 		}
@@ -202,7 +266,7 @@ func (q *Queries) ListRunningRuns(ctx context.Context) ([]Run, error) {
 }
 
 const listRunsForJob = `-- name: ListRunsForJob :many
-SELECT id, job_id, started_at, ended_at, duration_ms, status, exit_code, stdout, stderr, combined_log, truncated, created_at, pid, host FROM runs WHERE job_id = ? ORDER BY started_at DESC LIMIT ?
+SELECT id, job_id, started_at, ended_at, duration_ms, status, exit_code, stdout, stderr, combined_log, truncated, created_at, pid, host, env_hash FROM runs WHERE job_id = ? ORDER BY started_at DESC LIMIT ?
 `
 
 type ListRunsForJobParams struct {
@@ -234,6 +298,7 @@ func (q *Queries) ListRunsForJob(ctx context.Context, arg ListRunsForJobParams) 
 			&i.CreatedAt,
 			&i.Pid,
 			&i.Host,
+			&i.EnvHash,
 		); err != nil {
 			return nil, err
 		}
@@ -249,7 +314,7 @@ func (q *Queries) ListRunsForJob(ctx context.Context, arg ListRunsForJobParams) 
 }
 
 const listRunsWithJob = `-- name: ListRunsWithJob :many
-SELECT runs.id, runs.job_id, runs.started_at, runs.ended_at, runs.duration_ms, runs.status, runs.exit_code, runs.stdout, runs.stderr, runs.combined_log, runs.truncated, runs.created_at, runs.pid, runs.host, jobs.name AS job_name
+SELECT runs.id, runs.job_id, runs.started_at, runs.ended_at, runs.duration_ms, runs.status, runs.exit_code, runs.stdout, runs.stderr, runs.combined_log, runs.truncated, runs.created_at, runs.pid, runs.host, runs.env_hash, jobs.name AS job_name
 FROM runs JOIN jobs ON jobs.id = runs.job_id
 ORDER BY runs.started_at DESC LIMIT ?
 `
@@ -283,6 +348,7 @@ func (q *Queries) ListRunsWithJob(ctx context.Context, limit int64) ([]ListRunsW
 			&i.Run.CreatedAt,
 			&i.Run.Pid,
 			&i.Run.Host,
+			&i.Run.EnvHash,
 			&i.JobName,
 		); err != nil {
 			return nil, err
@@ -299,7 +365,7 @@ func (q *Queries) ListRunsWithJob(ctx context.Context, limit int64) ([]ListRunsW
 }
 
 const searchRunLogs = `-- name: SearchRunLogs :many
-SELECT runs.id, runs.job_id, runs.started_at, runs.ended_at, runs.duration_ms, runs.status, runs.exit_code, runs.stdout, runs.stderr, runs.combined_log, runs.truncated, runs.created_at, runs.pid, runs.host, jobs.name AS job_name
+SELECT runs.id, runs.job_id, runs.started_at, runs.ended_at, runs.duration_ms, runs.status, runs.exit_code, runs.stdout, runs.stderr, runs.combined_log, runs.truncated, runs.created_at, runs.pid, runs.host, runs.env_hash, jobs.name AS job_name
 FROM runs JOIN jobs ON jobs.id = runs.job_id
 WHERE runs.status != 'running'
   AND instr(lower(runs.combined_log), lower(?1)) > 0
@@ -340,6 +406,7 @@ func (q *Queries) SearchRunLogs(ctx context.Context, arg SearchRunLogsParams) ([
 			&i.Run.CreatedAt,
 			&i.Run.Pid,
 			&i.Run.Host,
+			&i.Run.EnvHash,
 			&i.JobName,
 		); err != nil {
 			return nil, err
@@ -353,4 +420,18 @@ func (q *Queries) SearchRunLogs(ctx context.Context, arg SearchRunLogsParams) ([
 		return nil, err
 	}
 	return items, nil
+}
+
+const setRunEnv = `-- name: SetRunEnv :exec
+UPDATE runs SET env_hash = ? WHERE id = ?
+`
+
+type SetRunEnvParams struct {
+	EnvHash sql.NullString
+	ID      string
+}
+
+func (q *Queries) SetRunEnv(ctx context.Context, arg SetRunEnvParams) error {
+	_, err := q.db.ExecContext(ctx, setRunEnv, arg.EnvHash, arg.ID)
+	return err
 }

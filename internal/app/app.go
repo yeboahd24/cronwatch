@@ -74,6 +74,10 @@ func dispatch(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		return pruneCommand(ctx, args[1:], stdout)
 	case "sync":
 		return syncCommand(ctx, args[1:], stdout)
+	case "envdiff":
+		return envdiffCommand(ctx, args[1:], stdout)
+	case "try":
+		return tryCommand(ctx, args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		// "cronwatch help run" shows the help for one command.
 		if len(args) > 1 && args[1] != "help" && !strings.HasPrefix(args[1], "-") {
@@ -96,6 +100,8 @@ Usage:
   cronwatch runs [job]
   cronwatch prune [--keep N] [--older-than DURATION]
   cronwatch sync [--crontab FILE]
+  cronwatch envdiff [--last-success] JOB-SLUG | --run RUN-ID
+  cronwatch try JOB-SLUG | --run RUN-ID
   cronwatch version
 
 Run "cronwatch COMMAND --help" for a command's flags.`)

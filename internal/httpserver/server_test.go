@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yeboahd24/cronwatch/internal/runenv"
 	"github.com/yeboahd24/cronwatch/internal/storage"
 )
 
@@ -167,5 +168,67 @@ func TestDashboardAndLogPages(t *testing.T) {
 	}
 	if errorsOnly := get(t, server, "/logs?errors=1"); strings.Contains(errorsOnly, "loading config") || !strings.Contains(errorsOnly, "connection refused") {
 		t.Fatal("errors-only filter kept stdout lines")
+	}
+}
+
+func TestRunPageShowsEnvironmentAndChangeSinceSuccess(t *testing.T) {
+	ctx := context.Background()
+	s, err := storage.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	job, err := s.UpsertJob(ctx, storage.JobSpec{Slug: "env", Name: "Env", Command: `"true"`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	shell := runenv.Env{Dir: "/home/a/project", User: "a", Vars: map[string]string{"PATH": "/opt/tool/bin:/usr/bin"}, Names: []string{"DISPLAY", "NVM_DIR", "PATH"}}
+	cron := runenv.Env{Dir: "/home/a", User: "a", Vars: map[string]string{"PATH": "/usr/bin"}, Names: []string{"PATH", "SECRET_TOKEN"}}
+	var ids []string
+	for i, tc := range []struct {
+		env    runenv.Env
+		status string
+	}{{shell, "success"}, {cron, "failed"}} {
+		run, err := s.CreateRun(ctx, job.ID, time.Now().Add(time.Duration(i-2)*time.Minute))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.SetRunEnv(ctx, run.ID, tc.env); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.FinishRun(ctx, run.ID, time.Now(), time.Second, tc.status, nil, "", "", "", false); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, run.ID)
+	}
+	server, err := New(s, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	get := func(path string) string {
+		recorder := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Host = "localhost:8765"
+		server.Router.ServeHTTP(recorder, req)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("%s: status %d", path, recorder.Code)
+		}
+		return recorder.Body.String()
+	}
+	failed := get("/runs/" + ids[1])
+	for _, want := range []string{"Environment changed since the", `href="/runs/` + ids[0] + `"`,
+		"missing <code>/opt/tool/bin</code>", "<code>/home/a/project</code> → <code>/home/a</code>",
+		"Not set in this run</span> <code>NVM_DIR</code>", "Set only in this run</span> <code>SECRET_TOKEN</code>",
+		"<h2>Environment</h2>", "1 set; values not recorded"} {
+		if !strings.Contains(failed, want) {
+			t.Fatalf("failed run page lacks %q:\n%s", want, failed)
+		}
+	}
+	if strings.Contains(failed, "DISPLAY") {
+		t.Fatal("session variable listed in the change notice")
+	}
+	success := get("/runs/" + ids[0])
+	if strings.Contains(success, "Environment changed") || !strings.Contains(success, "<code>/opt/tool/bin:/usr/bin</code>") {
+		t.Fatalf("success run page:\n%s", success)
 	}
 }

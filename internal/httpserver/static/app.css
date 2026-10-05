@@ -233,6 +233,23 @@ code, pre { font-family: var(--mono); font-size: 13px; }
 .error-label { color: var(--danger); font-weight: 600; white-space: nowrap; font-size: 14px; }
 .error-callout code { color: var(--log-text); overflow-wrap: anywhere; }
 
+.env-callout {
+  margin-top: 18px;
+  padding: 14px 16px;
+  border: 1px solid var(--warning);
+  border-radius: 12px;
+  background: rgba(251, 191, 36, 0.06);
+}
+
+.env-callout-title { margin: 0 0 8px; color: var(--warning); font-weight: 600; font-size: 14px; }
+.env-callout-title a { color: inherit; }
+.env-callout ul { margin: 0; padding-left: 18px; }
+.env-callout li { margin: 4px 0; overflow-wrap: anywhere; }
+.env-callout code { color: var(--log-text); }
+.env-field { font-weight: 600; }
+.env-names summary { cursor: pointer; color: var(--muted); }
+.env-names code { display: block; margin-top: 6px; overflow-wrap: anywhere; }
+
 /* Logs */
 
 .section-head {

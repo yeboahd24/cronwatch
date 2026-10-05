@@ -29,6 +29,9 @@ type Run struct {
 	CombinedLog string
 	Truncated   bool
 	CreatedAt   time.Time
+	// EnvHash identifies the run's recorded environment; empty for runs
+	// recorded before environments were captured.
+	EnvHash string
 }
 
 type JobView struct {

@@ -8,6 +8,12 @@ import (
 	"database/sql"
 )
 
+type Environment struct {
+	Hash      string
+	Data      string
+	CreatedAt string
+}
+
 type Job struct {
 	ID                 string
 	Slug               string
@@ -42,4 +48,5 @@ type Run struct {
 	CreatedAt   string
 	Pid         sql.NullInt64
 	Host        sql.NullString
+	EnvHash     sql.NullString
 }

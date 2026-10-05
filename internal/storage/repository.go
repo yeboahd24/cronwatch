@@ -54,7 +54,7 @@ func convertJob(row db.Job) (model.Job, error) {
 	return j, nil
 }
 func convertRun(row db.Run) (model.Run, error) {
-	r := model.Run{ID: row.ID, JobID: row.JobID, Status: row.Status, Stdout: row.Stdout, Stderr: row.Stderr, CombinedLog: row.CombinedLog, Truncated: row.Truncated != 0}
+	r := model.Run{ID: row.ID, JobID: row.JobID, Status: row.Status, Stdout: row.Stdout, Stderr: row.Stderr, CombinedLog: row.CombinedLog, Truncated: row.Truncated != 0, EnvHash: row.EnvHash.String}
 	var err error
 	r.StartedAt, err = parseTime(row.StartedAt)
 	if err != nil {
