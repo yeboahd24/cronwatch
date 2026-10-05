@@ -6,6 +6,21 @@
   {{template "status" .Run.Status}}
 </div>
 {{if .LastError}}<div class="error-callout" role="note"><span class="error-label">Last error</span><code>{{.LastError}}</code></div>{{end}}
+{{with .Env}}{{with .Changed}}<div class="env-callout" role="note">
+  <p class="env-callout-title">Environment changed since the <a href="/runs/{{.Since.ID}}">last successful run</a> {{template "time" .Since.StartedAt}}</p>
+  <ul>
+    {{- range .Diff.Changes}}
+    <li><span class="env-field">{{.Field}}</span>
+      {{- if or .OnlyA .OnlyB}}
+      {{- if .OnlyA}} missing <code>{{join .OnlyA ", "}}</code>{{end}}
+      {{- if and .OnlyA .OnlyB}};{{end}}
+      {{- if .OnlyB}} added <code>{{join .OnlyB ", "}}</code>{{end}}
+      {{- else}} <code>{{if .A}}{{.A}}{{else}}(unset){{end}}</code> → <code>{{if .B}}{{.B}}{{else}}(unset){{end}}</code>{{end}}</li>
+    {{- end}}
+    {{- with .Diff.OnlyA}}<li><span class="env-field">Not set in this run</span> <code>{{join . ", "}}</code></li>{{end}}
+    {{- with .Diff.OnlyB}}<li><span class="env-field">Set only in this run</span> <code>{{join . ", "}}</code></li>{{end}}
+  </ul>
+</div>{{end}}{{end}}
 <section class="panel details">
   <dl>
     <dt>Exit code</dt><dd>{{if .Run.ExitCode}}{{.Run.ExitCode}}{{else}}—{{end}}</dd>
@@ -24,5 +39,20 @@
 </div>
 {{if .Lines}}<div class="log-viewer log-viewer-tall" data-scroll-end tabindex="0" aria-label="Run output">{{template "loglines" .Lines}}</div>
 {{else}}<div class="panel"><p class="empty">No output on this stream.</p></div>{{end}}
+{{with .Env}}
+<h2>Environment</h2>
+<section class="panel details">
+  <dl>
+    <dt>Directory</dt><dd><code>{{.Dir}}</code></dd>
+    <dt>User</dt><dd>{{.User}}{{if .UID}} <span class="muted">(uid {{.UID}})</span>{{end}}</dd>
+    {{- range $name, $value := .Vars}}
+    <dt>{{$name}}</dt><dd><code>{{$value}}</code></dd>
+    {{- end}}
+    {{- with .Hidden}}
+    <dt>Other variables</dt><dd><details class="env-names"><summary>{{len .}} set; values not recorded</summary><code>{{join . ", "}}</code></details></dd>
+    {{- end}}
+  </dl>
+</section>
+{{end}}
 {{end}}
 {{template "foot"}}{{end}}

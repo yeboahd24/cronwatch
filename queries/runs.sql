@@ -41,3 +41,15 @@ FROM runs JOIN jobs ON jobs.id = runs.job_id
 WHERE runs.status != 'running'
   AND instr(lower(runs.combined_log), lower(sqlc.arg(query))) > 0
 ORDER BY runs.started_at DESC LIMIT sqlc.arg(row_limit);
+
+-- name: SetRunEnv :exec
+UPDATE runs SET env_hash = ? WHERE id = ?;
+
+-- name: LatestRunWithEnv :one
+SELECT * FROM runs WHERE job_id = ? AND env_hash IS NOT NULL
+ORDER BY started_at DESC LIMIT 1;
+
+-- name: LastSuccessWithEnvBefore :one
+SELECT * FROM runs
+WHERE job_id = ? AND status = 'success' AND env_hash IS NOT NULL AND started_at < ?
+ORDER BY started_at DESC LIMIT 1;

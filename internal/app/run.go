@@ -12,6 +12,7 @@ import (
 	"unicode"
 
 	"github.com/yeboahd24/cronwatch/internal/config"
+	"github.com/yeboahd24/cronwatch/internal/runenv"
 	"github.com/yeboahd24/cronwatch/internal/runner"
 	"github.com/yeboahd24/cronwatch/internal/schedule"
 	"github.com/yeboahd24/cronwatch/internal/storage"
@@ -121,12 +122,8 @@ func parseRunArgs(args []string, help io.Writer) (runOptions, error) {
 	if !validSlug(*slug) {
 		return opts, errors.New("--slug must contain lowercase letters, digits, or hyphens")
 	}
-	parts := make([]string, len(command))
-	for i, p := range command {
-		parts[i] = strconv.Quote(p)
-	}
 	opts = runOptions{
-		Spec:        storage.JobSpec{Slug: *slug, Name: *name, Command: strings.Join(parts, " ")},
+		Spec:        storage.JobSpec{Slug: *slug, Name: *name, Command: joinCommand(command)},
 		Command:     command,
 		DataDir:     *dataDir,
 		NoEcho:      *noEcho,
@@ -142,6 +139,32 @@ func parseRunArgs(args []string, help io.Writer) (runOptions, error) {
 		}
 	})
 	return opts, nil
+}
+
+// joinCommand stores argv as Go-quoted words; splitCommand reverses it.
+func joinCommand(argv []string) string {
+	parts := make([]string, len(argv))
+	for i, p := range argv {
+		parts[i] = strconv.Quote(p)
+	}
+	return strings.Join(parts, " ")
+}
+
+func splitCommand(command string) ([]string, error) {
+	var argv []string
+	for rest := strings.TrimSpace(command); rest != ""; rest = strings.TrimLeft(rest, " ") {
+		quoted, err := strconv.QuotedPrefix(rest)
+		if err != nil {
+			return nil, fmt.Errorf("stored command %q is not in the expected format", command)
+		}
+		word, _ := strconv.Unquote(quoted)
+		argv = append(argv, word)
+		rest = rest[len(quoted):]
+	}
+	if len(argv) == 0 {
+		return nil, errors.New("stored command is empty")
+	}
+	return argv, nil
 }
 
 func runCommand(ctx context.Context, args []string, stdout, stderr io.Writer) error {
@@ -174,6 +197,10 @@ func runCommand(ctx context.Context, args []string, stdout, stderr io.Writer) er
 	run, err := s.CreateRun(ctx, job.ID, started)
 	if err != nil {
 		return err
+	}
+	// The environment explains failures but is not needed to run the job.
+	if err := s.SetRunEnv(ctx, run.ID, runenv.Capture()); err != nil {
+		fmt.Fprintf(stderr, "cronwatch: warning: could not record the environment: %v\n", err)
 	}
 	var out, errOut io.Writer
 	if !opts.NoEcho {

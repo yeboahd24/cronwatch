@@ -15,6 +15,9 @@ record runs.
 
 - **Drop-in command wrapper.** Add `cronwatch run` to an existing cron entry.
 - **Useful failure detail.** Capture stdout, stderr, exit codes, and duration.
+- **Works here, fails in cron?** Each run records its environment, so
+  `cronwatch envdiff` shows what cron's `PATH`, shell, or directory lacks, and
+  `cronwatch try` reruns the job the way cron ran it.
 - **Missed-run detection.** A five-field cron schedule and grace period show
   when a job did not start on time.
 - **Local by default.** SQLite storage and a dashboard bound to
@@ -68,7 +71,10 @@ jobs and logs; it cannot execute commands.
   the end of the latest failing run's output (or the latest run when nothing
   is failing). Lines the command wrote to stderr are shown in red.
 - **Runs** lists recent runs across all jobs. A run's page shows its last error,
-  and its output opens at the end, with All / Stdout / Stderr views.
+  and its output opens at the end, with All / Stdout / Stderr views. Below the
+  output is the environment the run started in. When a run fails and its
+  environment differs from the last successful run's, a notice at the top
+  lists what changed.
 - **Logs** searches the output of the last 50 runs; **Errors only** limits
   results to stderr lines.
 
@@ -131,6 +137,8 @@ database. A user-level systemd service example is in
 | [`cronwatch jobs`](#cronwatch-jobs) | List jobs and their current status |
 | [`cronwatch runs`](#cronwatch-runs) | List recent runs |
 | [`cronwatch sync`](#cronwatch-sync) | Register jobs from your crontab before they run |
+| [`cronwatch envdiff`](#cronwatch-envdiff) | Compare a run's environment with your shell |
+| [`cronwatch try`](#cronwatch-try) | Rerun a job in the environment cron gave it |
 | [`cronwatch prune`](#cronwatch-prune) | Delete old finished runs |
 | [`cronwatch version`](#cronwatch-version) | Print the version |
 
@@ -171,6 +179,12 @@ running a job by hand to test it does not reset its schedule.
 When output exceeds `--max-log-bytes`, CronWatch keeps the first and last half
 and replaces the middle with a marker, so the error at the end of a failing job
 is kept. Treat stored logs as sensitive: command output may contain secrets.
+
+Each run also records the environment it started in: the working directory,
+the user, the names of all environment variables, and the values of `PATH`,
+`HOME`, `SHELL`, `USER`, `LOGNAME`, `TZ`, `TMPDIR`, `LANG`, `LANGUAGE` and
+`LC_*`. Other values are not stored, because they may hold secrets. Identical
+environments are stored once.
 
 Different names that produce the same slug share one job; CronWatch prints a
 warning when that happens, and `--slug` keeps them apart.
@@ -243,6 +257,66 @@ When everything is covered it prints
 `8 jobs in the crontab, all registered. Every crontab line is monitored.`
 `cronwatch serve` runs the same sync every minute, so you rarely need this by
 hand. See [crontab sync](#crontab-sync).
+
+### `cronwatch envdiff`
+
+```sh
+cronwatch envdiff [--last-success] [--all] JOB-SLUG
+cronwatch envdiff [--last-success] [--all] --run RUN-ID
+```
+
+Explains why a command works in your shell but fails under cron. It compares
+the environment of the job's latest run (or `--run`) with the shell you run
+`envdiff` in:
+
+```console
+$ cronwatch envdiff database-backup
+Comparing run 0486399e (2026-10-02 02:00, failed) of Database Backup with this shell.
+
+PATH
+  run:   /usr/bin:/bin
+  shell: /home/me/.local/bin:/usr/local/bin:/usr/bin:/bin
+  Missing from run: /home/me/.local/bin, /usr/local/bin
+SHELL
+  run:   /bin/sh
+  shell: /usr/bin/zsh
+Set only in shell: NVM_DIR, SSH_AUTH_SOCK
+Set only in run: MAILTO
+41 terminal or desktop session variables not shown (--all lists them).
+
+Values of other variables are not recorded, so changes to them are not shown.
+```
+
+`--last-success` compares the run with the job's last successful run instead,
+which shows what changed when a job that used to work starts failing.
+Variables whose values are not recorded are compared by name only.
+
+### `cronwatch try`
+
+```sh
+cronwatch try [--env NAME=VALUE]... JOB-SLUG
+cronwatch try [--env NAME=VALUE]... --run RUN-ID
+```
+
+Runs the job's command now, from your terminal, in the environment of its
+latest run: the same working directory and only the recorded variables, with
+the command looked up on that run's `PATH`. Use it to reproduce a cron failure
+and to check a fix without waiting for the next scheduled run:
+
+```console
+$ cronwatch try database-backup
+cronwatch: trying Database Backup with the environment of run 0486399e (2026-10-02 02:00, failed)
+cronwatch: directory /home/me, PATH=/usr/bin:/bin
+cronwatch: not set, because their values are not recorded: MAILTO
+cronwatch: backup.sh: command not found with this PATH
+```
+
+A job that has no recorded run yet gets cron's defaults (`PATH=/usr/bin:/bin`,
+`SHELL=/bin/sh`, the home directory). The run is not recorded, and `try` exits
+with the command's exit code. Variables whose values are not recorded, such as
+ones set at the top of the crontab, are not set. Pass any the job needs with
+`--env NAME=VALUE` (repeatable); `FOO=bar cronwatch try` does not work,
+because `try` replaces the environment.
 
 ### `cronwatch prune`
 

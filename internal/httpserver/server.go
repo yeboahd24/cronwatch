@@ -15,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/yeboahd24/cronwatch/internal/logs"
 	"github.com/yeboahd24/cronwatch/internal/model"
+	"github.com/yeboahd24/cronwatch/internal/runenv"
 	"github.com/yeboahd24/cronwatch/internal/storage"
 )
 
@@ -79,6 +80,7 @@ func New(store *storage.Store, opts Options) (*Server, error) {
 		},
 		"seconds": func(n int64) string { return humanDuration(time.Duration(n) * time.Second) },
 		"shell":   shellCommand,
+		"join":    strings.Join,
 	}
 	t, err := template.New("").Funcs(funcs).ParseFS(assets, "templates/*.html")
 	if err != nil {
@@ -224,13 +226,60 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 		stream = "all"
 		lines = logs.Parse(run.CombinedLog)
 	}
+	env, err := s.loadRunEnv(r, run)
+	if err != nil {
+		queryError(w, err)
+		return
+	}
 	s.render(w, "run.html", page{Title: "Run · " + job.Name, Tab: "runs", Data: struct {
 		Run       model.Run
 		Job       model.Job
 		Stream    string
 		Lines     []logs.Line
 		LastError string
-	}{run, job, stream, lines, logs.LastError(stderr)}})
+		Env       *runEnv
+	}{run, job, stream, lines, logs.LastError(stderr), env}})
+}
+
+// runEnv is a run's recorded environment for the run page. Changed is set for
+// a failed run whose environment differs from the last successful run's.
+type runEnv struct {
+	runenv.Env
+	Changed *envChange
+}
+
+type envChange struct {
+	Since model.Run   // the last successful run
+	Diff  runenv.Diff // A is the last success, B is this run
+}
+
+// loadRunEnv returns nil for runs recorded before environments were captured.
+func (s *Server) loadRunEnv(r *http.Request, run model.Run) (*runEnv, error) {
+	if run.EnvHash == "" {
+		return nil, nil
+	}
+	env, err := s.Store.GetEnvironment(r.Context(), run.EnvHash)
+	if err != nil {
+		return nil, err
+	}
+	re := &runEnv{Env: env}
+	if run.Status != "failed" {
+		return re, nil
+	}
+	success, err := s.Store.LastSuccessWithEnvBefore(r.Context(), run.JobID, run.StartedAt)
+	if errors.Is(err, sql.ErrNoRows) || err == nil && success.EnvHash == run.EnvHash {
+		return re, nil
+	} else if err != nil {
+		return nil, err
+	}
+	before, err := s.Store.GetEnvironment(r.Context(), success.EnvHash)
+	if err != nil {
+		return nil, err
+	}
+	if diff, _ := runenv.Compare(before, env).WithoutSession(); !diff.Empty() {
+		re.Changed = &envChange{Since: success, Diff: diff}
+	}
+	return re, nil
 }
 
 func (s *Server) handleRuns(w http.ResponseWriter, r *http.Request) {

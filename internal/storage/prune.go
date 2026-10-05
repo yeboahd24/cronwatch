@@ -44,5 +44,8 @@ func (s *Store) Prune(ctx context.Context, keep int, before time.Time) (PruneRes
 			return result, err
 		}
 	}
+	if _, err := q.DeleteUnusedEnvironments(ctx); err != nil {
+		return result, err
+	}
 	return result, tx.Commit()
 }
