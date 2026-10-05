@@ -176,6 +176,7 @@ database. A user-level systemd service example is in
 | [`cronwatch crontab-history`](#cronwatch-crontab-history) | List changes to your crontab |
 | [`cronwatch ping`](#cronwatch-ping) | Record a run of a job you cannot wrap |
 | [`cronwatch check`](#cronwatch-check) | One status line and exit code for monitoring systems |
+| [`cronwatch timers`](#cronwatch-timers) | List systemd timers and their last results |
 | [`cronwatch prune`](#cronwatch-prune) | Delete old finished runs |
 | [`cronwatch version`](#cronwatch-version) | Print the version |
 
@@ -590,6 +591,39 @@ $ echo $?
 
 Over SSH, a remote monitor can run
 `ssh server .local/bin/cronwatch check` and use its exit code.
+
+### `cronwatch timers`
+
+```sh
+cronwatch timers [--all] [--json]
+```
+
+Lists systemd timers, the other way Linux schedules jobs, read-only: system
+timers and, when you have a user session, your own. `--all` includes inactive
+and masked timers.
+
+```console
+$ cronwatch timers
+TIMER                         SCHEDULE            CRON       LAST RUN          RESULT   NEXT RUN
+fstrim.timer                  Mon *-*-* 00:00:00  0 0 * * 1  2026-10-05 01:04  success  2026-10-12 01:39
+logrotate.timer               *-*-* 00:00:00      0 0 * * *  2026-10-05 00:00  success  2026-10-06 00:00
+systemd-tmpfiles-clean.timer  OnBootUSec=15min    —          2026-10-04 21:45  success  —
+```
+
+CRON is the equivalent cron expression, when one exists. To monitor a timer
+like a cron job, put `cronwatch run` in front of its service's `ExecStart`
+and pass that expression as `--schedule`:
+
+```ini
+# systemctl edit logrotate.service
+[Service]
+ExecStart=
+ExecStart=/usr/local/bin/cronwatch run --name logrotate --schedule "0 0 * * *" -- /usr/sbin/logrotate /etc/logrotate.conf
+```
+
+A service run by systemd records into the database of the user it runs as,
+so set `CRONWATCH_DATA_DIR` (or `--data-dir`) to the directory your
+dashboard reads.
 
 ### `cronwatch prune`
 
