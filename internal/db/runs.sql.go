@@ -408,6 +408,53 @@ func (q *Queries) ListFailureGroups(ctx context.Context, arg ListFailureGroupsPa
 	return items, nil
 }
 
+const listRunDurations = `-- name: ListRunDurations :many
+SELECT id, started_at, duration_ms, status FROM runs
+WHERE job_id = ? AND status NOT IN ('running', 'skipped') AND duration_ms IS NOT NULL
+ORDER BY started_at DESC LIMIT ?
+`
+
+type ListRunDurationsParams struct {
+	JobID string
+	Limit int64
+}
+
+type ListRunDurationsRow struct {
+	ID         string
+	StartedAt  string
+	DurationMs sql.NullInt64
+	Status     string
+}
+
+// The job's newest finished runs, without their output.
+func (q *Queries) ListRunDurations(ctx context.Context, arg ListRunDurationsParams) ([]ListRunDurationsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listRunDurations, arg.JobID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRunDurationsRow
+	for rows.Next() {
+		var i ListRunDurationsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.StartedAt,
+			&i.DurationMs,
+			&i.Status,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRunStartsSince = `-- name: ListRunStartsSince :many
 SELECT started_at FROM runs WHERE job_id = ? AND started_at >= ? ORDER BY started_at
 `
@@ -848,4 +895,78 @@ type SetRunOverlapParams struct {
 func (q *Queries) SetRunOverlap(ctx context.Context, arg SetRunOverlapParams) error {
 	_, err := q.db.ExecContext(ctx, setRunOverlap, arg.OverlappedRunID, arg.ID)
 	return err
+}
+
+const successDurationsBefore = `-- name: SuccessDurationsBefore :many
+SELECT duration_ms FROM runs
+WHERE job_id = ? AND status = 'success' AND started_at < ? AND duration_ms IS NOT NULL
+ORDER BY started_at DESC LIMIT ?
+`
+
+type SuccessDurationsBeforeParams struct {
+	JobID     string
+	StartedAt string
+	Limit     int64
+}
+
+func (q *Queries) SuccessDurationsBefore(ctx context.Context, arg SuccessDurationsBeforeParams) ([]sql.NullInt64, error) {
+	rows, err := q.db.QueryContext(ctx, successDurationsBefore, arg.JobID, arg.StartedAt, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []sql.NullInt64
+	for rows.Next() {
+		var duration_ms sql.NullInt64
+		if err := rows.Scan(&duration_ms); err != nil {
+			return nil, err
+		}
+		items = append(items, duration_ms)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const successDurationsSince = `-- name: SuccessDurationsSince :many
+SELECT started_at, duration_ms FROM runs
+WHERE job_id = ? AND status = 'success' AND started_at >= ? AND duration_ms IS NOT NULL
+ORDER BY started_at
+`
+
+type SuccessDurationsSinceParams struct {
+	JobID     string
+	StartedAt string
+}
+
+type SuccessDurationsSinceRow struct {
+	StartedAt  string
+	DurationMs sql.NullInt64
+}
+
+func (q *Queries) SuccessDurationsSince(ctx context.Context, arg SuccessDurationsSinceParams) ([]SuccessDurationsSinceRow, error) {
+	rows, err := q.db.QueryContext(ctx, successDurationsSince, arg.JobID, arg.StartedAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SuccessDurationsSinceRow
+	for rows.Next() {
+		var i SuccessDurationsSinceRow
+		if err := rows.Scan(&i.StartedAt, &i.DurationMs); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

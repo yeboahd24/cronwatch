@@ -83,6 +83,12 @@ jobs and logs; it cannot execute commands.
   missing, and how the exit code and duration changed. Lines are matched
   ignoring numbers, times, IDs and `/tmp` paths, so a changed date or size is
   not reported as a difference.
+- **Durations.** The jobs list and each job's page show a bar chart of recent
+  run durations. A successful run that takes more than 3× the median of the
+  job's previous 20 successful runs (and at least 10 seconds longer) is marked
+  **slow**. A job's page also says when it is **getting slower**: its median
+  over the last 7 days is 40% or more above the 30 days before (and at least
+  10 seconds more).
 - **Failure types.** Failed runs that end with the same error are grouped, by
   their last few stderr lines (or output, if stderr is empty) with numbers,
   times, IDs and `/tmp` paths ignored. A failed run's page says whether its

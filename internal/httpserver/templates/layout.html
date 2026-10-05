@@ -38,6 +38,12 @@
 
 {{define "time"}}<time datetime="{{iso .}}" title="{{full .}}">{{when .}}</time>{{end}}
 
+{{define "sparkline"}}<svg class="spark" role="img" aria-label="{{.Summary}}">
+{{- range .Bars}}<a href="{{.Href}}"><title>{{.Title}}</title><rect class="spark-{{.Kind}}" x="{{.X}}" y="{{.Y}}" width="{{.W}}" height="{{.H}}" rx="1"/></a>{{end}}
+</svg>{{end}}
+
+{{define "slow"}}<span class="badge badge-slow" title="{{printf "%.1f" .Factor}}× the usual {{dur .Usual}}">slow</span>{{end}}
+
 {{define "loglines"}}<ol class="log-lines">
 {{- range .}}
 {{- if .IsTruncated}}<li class="log-gap">{{.Text}}</li>

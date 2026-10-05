@@ -14,6 +14,14 @@
     {{if .View.MissedAt}}<dt>Missed</dt><dd class="text-warning">Expected {{template "time" .View.MissedAt}}, no run started</dd>{{end}}
   </dl>
 </section>
+{{with .Trend}}{{if .Bars}}
+<h2>Duration</h2>
+<section class="panel duration-panel">
+  <p class="duration-note">{{if .Usual}}Usually {{dur .Usual}}{{else}}Not enough successful runs yet for a usual duration{{end}}{{if .Drift}}. <span class="text-warning">Getting slower: {{dur .Drift.Recent}} over the last 7 days, up {{.Drift.Percent}}% from {{dur .Drift.Prior}} over the 30 days before.</span>{{else}}.{{end}}</p>
+  {{template "sparkline" .}}
+  <p class="spark-legend"><span class="key key-ok"></span>Success <span class="key key-slow"></span>Unusually slow <span class="key key-fail"></span>Failed · last {{len .Bars}} runs, oldest on the left</p>
+</section>
+{{end}}{{end}}
 {{if .Failures}}
 <h2 id="failures">Failure types</h2>
 <section class="panel table-wrap">
@@ -41,7 +49,7 @@
     <tr>
       <td data-label="Started"><a href="/runs/{{.ID}}">{{template "time" .StartedAt}}</a></td>
       <td data-label="Status">{{template "status" .Status}}</td>
-      <td data-label="Duration">{{duration .DurationMS}}</td>
+      <td data-label="Duration">{{duration .DurationMS}}{{with $.Data.Trend.SlowRun .ID}} {{template "slow" .}}{{end}}</td>
       <td data-label="Peak memory">{{with .Usage}}{{kb .MaxRSSKB}}{{else}}—{{end}}</td>
       <td data-label="Exit code">{{if .ExitCode}}{{.ExitCode}}{{else}}—{{end}}</td>
     </tr>

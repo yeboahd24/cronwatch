@@ -457,3 +457,63 @@ func TestFailureHistoryOnRunAndJobPages(t *testing.T) {
 		}
 	}
 }
+
+func TestSlowRunsAndDrift(t *testing.T) {
+	ctx := context.Background()
+	s, err := storage.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	job, err := s.UpsertJob(ctx, storage.JobSpec{Slug: "export", Name: "Export", Command: `"true"`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	day := 24 * time.Hour
+	zero := 0
+	add := func(started time.Time, d time.Duration) model.Run {
+		run, err := s.CreateRun(ctx, job.ID, started)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.CompleteRun(ctx, run.ID, storage.Completion{Ended: started.Add(d), Duration: d, Status: "success", ExitCode: &zero}); err != nil {
+			t.Fatal(err)
+		}
+		return run
+	}
+	for i := 37; i >= 8; i-- {
+		add(now.Add(-time.Duration(i)*day), 2*time.Minute)
+	}
+	for i := 7; i >= 1; i-- {
+		add(now.Add(-time.Duration(i)*day), 3*time.Minute)
+	}
+	slow := add(now.Add(-time.Hour), 12*time.Minute)
+	server, err := New(s, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	get := func(path string) string {
+		recorder := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Host = "localhost:8765"
+		server.Router.ServeHTTP(recorder, req)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("%s: status %d", path, recorder.Code)
+		}
+		return recorder.Body.String()
+	}
+	slowBadge := `<span class="badge badge-slow" title="6.0× the usual 2m">slow</span>`
+	for path, wants := range map[string][]string{
+		"/":                {slowBadge, `<svg class="spark" role="img" aria-label="Export: durations of the last 30 runs, longest 12m, usually 2m, 1 unusually slow">`},
+		"/jobs/" + job.ID:  {slowBadge, "<h2>Duration</h2>", "Getting slower: 3m over the last 7 days, up 50% from 2m over the 30 days before.", `class="spark-slow"`},
+		"/runs/" + slow.ID: {`<span class="text-warning">· 6.0× the usual 2m</span>`},
+	} {
+		body := get(path)
+		for _, want := range wants {
+			if !strings.Contains(body, want) {
+				t.Fatalf("%s lacks %q:\n%s", path, want, body)
+			}
+		}
+	}
+}

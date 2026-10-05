@@ -105,3 +105,19 @@ LIMIT ?;
 
 -- name: SetFailureSignature :exec
 UPDATE runs SET failure_signature = ? WHERE id = ?;
+
+-- name: SuccessDurationsBefore :many
+SELECT duration_ms FROM runs
+WHERE job_id = ? AND status = 'success' AND started_at < ? AND duration_ms IS NOT NULL
+ORDER BY started_at DESC LIMIT ?;
+
+-- name: SuccessDurationsSince :many
+SELECT started_at, duration_ms FROM runs
+WHERE job_id = ? AND status = 'success' AND started_at >= ? AND duration_ms IS NOT NULL
+ORDER BY started_at;
+
+-- name: ListRunDurations :many
+-- The job's newest finished runs, without their output.
+SELECT id, started_at, duration_ms, status FROM runs
+WHERE job_id = ? AND status NOT IN ('running', 'skipped') AND duration_ms IS NOT NULL
+ORDER BY started_at DESC LIMIT ?;

@@ -26,7 +26,7 @@
 <section class="panel details">
   <dl>
     <dt>Exit code</dt><dd>{{if .Run.ExitCode}}{{.Run.ExitCode}}{{else}}—{{end}}</dd>
-    <dt>Duration</dt><dd>{{duration .Run.DurationMS}}</dd>
+    <dt>Duration</dt><dd>{{duration .Run.DurationMS}}{{with .Slow}} <span class="text-warning">· {{printf "%.1f" .Factor}}× the usual {{dur .Usual}}</span>{{end}}</dd>
     <dt>Ended</dt><dd>{{if .Run.EndedAt}}{{template "time" .Run.EndedAt}}{{else}}—{{end}}</dd>
     {{if and .Run.Reason (eq .Run.Status "success")}}<dt>Status</dt><dd>Success: {{.Run.Reason}}</dd>{{end}}
     {{if and .Run.OverlappedRunID (ne .Run.Status "skipped")}}<dt>Overlap</dt><dd class="text-warning">Started while <a href="/runs/{{.Run.OverlappedRunID}}">an earlier run</a> was still running</dd>{{end}}

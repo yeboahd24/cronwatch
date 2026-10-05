@@ -14,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/yeboahd24/cronwatch/internal/durations"
 	"github.com/yeboahd24/cronwatch/internal/logs"
 	"github.com/yeboahd24/cronwatch/internal/model"
 	"github.com/yeboahd24/cronwatch/internal/runenv"
@@ -85,6 +86,7 @@ func New(store *storage.Store, opts Options) (*Server, error) {
 		"kb":      humanKB,
 		"add":     func(a, b int) int { return a + b },
 		"failure": failureSummary,
+		"dur":     humanDuration,
 		"ms":      func(ms int64) string { return humanDuration(time.Duration(ms) * time.Millisecond) },
 	}
 	t, err := template.New("").Funcs(funcs).ParseFS(assets, "templates/*.html")
@@ -136,8 +138,14 @@ func queryError(w http.ResponseWriter, err error) {
 }
 
 type dashboard struct {
-	Jobs   []model.JobView
+	Jobs   []jobRow
 	Recent *logExcerpt
+}
+
+// jobRow is a job on the jobs list with its recent durations.
+type jobRow struct {
+	model.JobView
+	Trend *jobTrend
 }
 
 // loadDashboard returns the job views and the run for the Recent logs panel:
@@ -147,8 +155,13 @@ func (s *Server) loadDashboard(r *http.Request) (dashboard, error) {
 	if err != nil {
 		return dashboard{}, err
 	}
-	d := dashboard{Jobs: jobs}
+	d := dashboard{}
 	for _, j := range jobs {
+		trend, err := s.Store.JobTrend(r.Context(), j.ID, listSparkRuns, s.now())
+		if err != nil {
+			return dashboard{}, err
+		}
+		d.Jobs = append(d.Jobs, jobRow{JobView: j, Trend: newJobTrend(trend, j.Name)})
 		if model.Failing(j.Status) && j.LastRun != nil && (d.Recent == nil || j.LastRun.StartedAt.After(d.Recent.Run.StartedAt)) {
 			d.Recent = &logExcerpt{Run: *j.LastRun, JobName: j.Name}
 		}
@@ -208,11 +221,17 @@ func (s *Server) handleJob(w http.ResponseWriter, r *http.Request) {
 		queryError(w, err)
 		return
 	}
+	trend, err := s.Store.JobTrend(r.Context(), job.ID, jobSparkRuns, s.now())
+	if err != nil {
+		queryError(w, err)
+		return
+	}
 	s.render(w, "job.html", page{Title: job.Name, Tab: "jobs", Data: struct {
 		View     model.JobView
 		Runs     []model.Run
 		Failures []storage.FailureGroup
-	}{view, runs, groups}})
+		Trend    *jobTrend
+	}{view, runs, groups, newJobTrend(trend, job.Name)}})
 }
 
 // failureGroupLimit caps the Failure types table on a job page.
@@ -279,6 +298,18 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 		queryError(w, err)
 		return
 	}
+	// A successful run is compared with the successes before it.
+	var slow *durations.Slowness
+	if run.Status == "success" && run.DurationMS != nil {
+		earlier, err := s.Store.SuccessDurationsBefore(r.Context(), run.JobID, run.StartedAt, durations.Baseline)
+		if err != nil {
+			queryError(w, err)
+			return
+		}
+		if sl, ok := durations.Slow(time.Duration(*run.DurationMS)*time.Millisecond, earlier); ok {
+			slow = &sl
+		}
+	}
 	var history *storage.FailureHistory
 	if run.FailureSignature != "" {
 		h, err := s.Store.FailureHistoryBefore(r.Context(), run)
@@ -298,7 +329,8 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 		LastSuccess *model.Run
 		Compare     *logCompare
 		History     *storage.FailureHistory
-	}{run, job, stream, lines, logs.LastError(stderr), env, success, compare, history}})
+		Slow        *durations.Slowness
+	}{run, job, stream, lines, logs.LastError(stderr), env, success, compare, history, slow}})
 }
 
 // compareLines caps each list on the comparison view; logs can be long.
