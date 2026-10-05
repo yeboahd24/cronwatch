@@ -107,9 +107,16 @@ A run's page also shows why a run counts as failed when its exit code alone
 does not say (see [Deciding success](#deciding-success)), its peak memory and
 CPU time, and whether it started while an earlier run was still going.
 
-![The Timeline page: one row per job over the last 24 hours. Successful runs are short green bars, failures tall red bars, missed runs dashed yellow boxes, and small ticks mark expected run times.](docs/images/timeline.png)
+![The Jobs page: six jobs with their status, last run, duration and next expected run. Each duration has a small bar chart of recent runs; Nightly Export shows one unusually slow run in yellow. Below, Recent logs shows the failed Database Backup's output ending in "pg_dump: command not found".](docs/images/jobs.png)
 
-![A failed run's page. The last error is "pg_dump: command not found", and a notice lists what changed since the last successful run: PATH is missing /usr/local/pgsql/bin and /usr/local/bin, the shell and working directory differ, and LANG, PGPASSFILE and USER are not set.](docs/images/run-environment-change.png)
+![A failed run of Database Backup. The last error is "pg_dump: command not found", marked as a new error. A notice says the environment changed since the last successful run: PATH is missing /usr/local/pgsql/bin. The "vs last success" view shows the error as the one new line, and three lines from the last success, from the dump to the upload, as missing.](docs/images/run-failed.png)
+
+![The Nightly Export job page. Its duration chart shows runs getting taller over the last week with one tall yellow bar for an unusually slow night, and the note "Getting slower: 3m 6s over the last 7 days, up 50% from 2m 4s over the 30 days before." Below, Failure types lists one error, "export: upstream API returned 503 Service Unavailable".](docs/images/job-durations.png)
+
+![The Timeline page: one row per job over the last 24 hours. Successful runs are short green bars, failures tall red bars, missed runs dashed yellow boxes, and dotted lines mark crontab changes; on the Ingest Queue row, two missed runs sit between the change that commented its line out and the one that restored it.](docs/images/timeline.png)
+
+These screenshots use made-up demo data; `sh scripts/screenshots.sh`
+regenerates them.
 
 ### Cron example
 
@@ -706,6 +713,10 @@ sqlc generate
 Queries live in [`queries/`](queries/), generated Go code in
 [`internal/db/`](internal/db/), and goose migrations in
 [`migrations/`](migrations/). The build embeds migrations and web assets.
+
+`sh scripts/screenshots.sh` regenerates the README screenshots from demo data
+(`go run ./scripts/demo -data-dir DIR` builds that data on its own); it needs
+Chromium or Google Chrome.
 
 `sh scripts/release.sh VERSION` builds Linux and macOS archives plus checksums
 and copies the publishable installer. See
