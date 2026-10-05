@@ -362,6 +362,13 @@ code, pre { font-family: var(--mono); font-size: 13px; }
 .more a { color: var(--muted); }
 .more a:hover { color: var(--success); }
 
+/* Comparison with the last success */
+
+.compare-intro { color: var(--muted); margin: 12px 0 14px; }
+.compare-intro a { color: var(--text); }
+.compare-head { font-size: 15px; margin: 22px 0 10px; }
+.compare-head + .log-viewer { max-height: 420px; }
+
 /* Timeline */
 
 .tl-head { margin-top: 8px; }

@@ -40,10 +40,28 @@
     <a href="?stream=all"{{if eq .Stream "all"}} aria-current="page"{{end}}>All</a>
     <a href="?stream=stdout"{{if eq .Stream "stdout"}} aria-current="page"{{end}}>Stdout</a>
     <a href="?stream=stderr"{{if eq .Stream "stderr"}} aria-current="page"{{end}}>Stderr</a>
+    {{- if .LastSuccess}}
+    <a href="?stream=compare"{{if eq .Stream "compare"}} aria-current="page"{{end}}>vs last success</a>
+    {{- end}}
   </nav>
 </div>
+{{with .Compare}}
+<p class="compare-intro">Compared with the <a href="/runs/{{.Success.ID}}">last successful run</a> {{template "time" .Success.StartedAt}}. Lines are matched ignoring numbers, times, IDs and <code>/tmp</code> paths.</p>
+{{if or .DurationChange .ExitChange .Truncated}}<section class="panel details"><dl>
+  {{if .ExitChange}}<dt>Exit code</dt><dd>{{.ExitChange}}</dd>{{end}}
+  {{if .DurationChange}}<dt>Duration</dt><dd>{{.DurationChange}}</dd>{{end}}
+  {{if .Truncated}}<dt>Note</dt><dd class="text-warning">Part of the output was truncated, so lines in the dropped middle are not compared</dd>{{end}}
+</dl></section>{{end}}
+<h3 class="compare-head">New in this run <span class="muted">({{len .Added}}{{if .AddedHidden}} of {{add (len .Added) .AddedHidden}}{{end}})</span></h3>
+{{if .Added}}<div class="log-viewer" tabindex="0" aria-label="Lines new in this run">{{template "loglines" .Added}}</div>
+{{else}}<div class="panel"><p class="empty">No new lines: this run printed nothing the last success did not.</p></div>{{end}}
+<h3 class="compare-head">Missing from this run <span class="muted">({{len .Removed}}{{if .RemovedHidden}} of {{add (len .Removed) .RemovedHidden}}{{end}})</span></h3>
+{{if .Removed}}<div class="log-viewer" tabindex="0" aria-label="Lines from the last success missing in this run">{{template "loglines" .Removed}}</div>
+{{else}}<div class="panel"><p class="empty">Nothing missing: every line of the last success appears in this run.</p></div>{{end}}
+{{else}}
 {{if .Lines}}<div class="log-viewer log-viewer-tall" data-scroll-end tabindex="0" aria-label="Run output">{{template "loglines" .Lines}}</div>
 {{else}}<div class="panel"><p class="empty">No output on this stream.</p></div>{{end}}
+{{end}}
 {{with .Env}}
 <h2>Environment</h2>
 <section class="panel details">

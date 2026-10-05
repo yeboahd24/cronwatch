@@ -93,3 +93,13 @@ func (s *Store) ActivitySince(ctx context.Context, t time.Time) (map[string]*Job
 	}
 	return out, nil
 }
+
+// LastSuccessBefore returns the job's newest successful run that started
+// before t, or sql.ErrNoRows.
+func (s *Store) LastSuccessBefore(ctx context.Context, jobID string, t time.Time) (model.Run, error) {
+	row, err := db.New(s.DB).LastSuccessBefore(ctx, db.LastSuccessBeforeParams{JobID: jobID, StartedAt: timestamp(t)})
+	if err != nil {
+		return model.Run{}, err
+	}
+	return convertRun(row)
+}

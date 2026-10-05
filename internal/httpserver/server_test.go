@@ -342,3 +342,61 @@ func TestTimeline(t *testing.T) {
 		t.Fatal("unknown range did not fall back to 24 hours")
 	}
 }
+
+func TestRunPageComparesWithLastSuccess(t *testing.T) {
+	ctx := context.Background()
+	s, err := storage.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	job, err := s.UpsertJob(ctx, storage.JobSpec{Slug: "backup", Name: "Backup", Command: `"true"`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	finish := func(started time.Time, status string, code int, combined string, d time.Duration) model.Run {
+		run, err := s.CreateRun(ctx, job.ID, started)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.CompleteRun(ctx, run.ID, storage.Completion{Ended: started.Add(d), Duration: d, Status: status, ExitCode: &code, Combined: combined}); err != nil {
+			t.Fatal(err)
+		}
+		return run
+	}
+	now := time.Now()
+	success := finish(now.Add(-48*time.Hour), "success", 0, "[Sat 02:00] Starting backup\nDump complete. Size: 1.7G\nUploaded to api\n", 42*time.Second)
+	failed := finish(now.Add(-24*time.Hour), "failed", 255, "[Sun 02:00] Starting backup\nDump complete. Size: 1.8G\n\x02ssh: connect to host api port 22: Connection timed out\n", 9*time.Minute)
+	server, err := New(s, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	get := func(path string) string {
+		recorder := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Host = "localhost:8765"
+		server.Router.ServeHTTP(recorder, req)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("%s: status %d", path, recorder.Code)
+		}
+		return recorder.Body.String()
+	}
+	if body := get("/runs/" + failed.ID); !strings.Contains(body, `href="?stream=compare"`) {
+		t.Fatal("failed run page has no comparison tab")
+	}
+	if body := get("/runs/" + success.ID); strings.Contains(body, "stream=compare") {
+		t.Fatal("successful run page offers a comparison")
+	}
+	body := get("/runs/" + failed.ID + "?stream=compare")
+	for _, want := range []string{`<a href="/runs/` + success.ID + `">last successful run</a>`,
+		"<dd>255, the last success exited 0</dd>", "<dd>9m, the last success took 42s</dd>",
+		"New in this run <span class=\"muted\">(1)", "is-stderr", "ssh: connect to host api port 22: Connection timed out",
+		"Missing from this run <span class=\"muted\">(1)", "Uploaded to api"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("comparison lacks %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "Starting backup") || strings.Contains(body, "Dump complete") {
+		t.Fatal("lines that differ only in dates or numbers were reported")
+	}
+}

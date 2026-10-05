@@ -175,6 +175,44 @@ func (q *Queries) GetRun(ctx context.Context, id string) (Run, error) {
 	return i, err
 }
 
+const lastSuccessBefore = `-- name: LastSuccessBefore :one
+SELECT id, job_id, started_at, ended_at, duration_ms, status, exit_code, stdout, stderr, combined_log, truncated, created_at, pid, host, env_hash, reason, overlapped_run_id, max_rss_kb, user_cpu_ms, sys_cpu_ms FROM runs WHERE job_id = ? AND status = 'success' AND started_at < ?
+ORDER BY started_at DESC LIMIT 1
+`
+
+type LastSuccessBeforeParams struct {
+	JobID     string
+	StartedAt string
+}
+
+func (q *Queries) LastSuccessBefore(ctx context.Context, arg LastSuccessBeforeParams) (Run, error) {
+	row := q.db.QueryRowContext(ctx, lastSuccessBefore, arg.JobID, arg.StartedAt)
+	var i Run
+	err := row.Scan(
+		&i.ID,
+		&i.JobID,
+		&i.StartedAt,
+		&i.EndedAt,
+		&i.DurationMs,
+		&i.Status,
+		&i.ExitCode,
+		&i.Stdout,
+		&i.Stderr,
+		&i.CombinedLog,
+		&i.Truncated,
+		&i.CreatedAt,
+		&i.Pid,
+		&i.Host,
+		&i.EnvHash,
+		&i.Reason,
+		&i.OverlappedRunID,
+		&i.MaxRssKb,
+		&i.UserCpuMs,
+		&i.SysCpuMs,
+	)
+	return i, err
+}
+
 const lastSuccessWithEnvBefore = `-- name: LastSuccessWithEnvBefore :one
 SELECT id, job_id, started_at, ended_at, duration_ms, status, exit_code, stdout, stderr, combined_log, truncated, created_at, pid, host, env_hash, reason, overlapped_run_id, max_rss_kb, user_cpu_ms, sys_cpu_ms FROM runs
 WHERE job_id = ? AND status = 'success' AND env_hash IS NOT NULL AND started_at < ?

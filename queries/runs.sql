@@ -77,3 +77,7 @@ ORDER BY started_at DESC LIMIT 1;
 SELECT id, job_id, started_at, ended_at, duration_ms, status, exit_code, reason, overlapped_run_id
 FROM runs WHERE started_at < sqlc.arg(to_time) AND (ended_at IS NULL OR ended_at >= sqlc.arg(from_time))
 ORDER BY started_at;
+
+-- name: LastSuccessBefore :one
+SELECT * FROM runs WHERE job_id = ? AND status = 'success' AND started_at < ?
+ORDER BY started_at DESC LIMIT 1;

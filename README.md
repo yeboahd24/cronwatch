@@ -78,7 +78,11 @@ jobs and logs; it cannot execute commands.
   and its output opens at the end, with All / Stdout / Stderr views. Below the
   output is the environment the run started in. When a run fails and its
   environment differs from the last successful run's, a notice at the top
-  lists what changed.
+  lists what changed. A failed run also has a **vs last success** view: the
+  lines that are new in this run, the lines from the last success that are
+  missing, and how the exit code and duration changed. Lines are matched
+  ignoring numbers, times, IDs and `/tmp` paths, so a changed date or size is
+  not reported as a difference.
 - **Logs** searches the output of the last 50 runs; **Errors only** limits
   results to stderr lines.
 - **Timeline** shows every job's runs over the last 24 hours or 7 days, one row

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"embed"
 	"errors"
+	"fmt"
 	"html/template"
 	"io/fs"
 	"net/http"
@@ -82,6 +83,7 @@ func New(store *storage.Store, opts Options) (*Server, error) {
 		"shell":   shellCommand,
 		"join":    strings.Join,
 		"kb":      humanKB,
+		"add":     func(a, b int) int { return a + b },
 		"ms":      func(ms int64) string { return humanDuration(time.Duration(ms) * time.Millisecond) },
 	}
 	t, err := template.New("").Funcs(funcs).ParseFS(assets, "templates/*.html")
@@ -218,13 +220,28 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	stderr := logs.ParseAs(run.Stderr, logs.Stderr)
+	// A failed run can be compared with the job's last successful run.
+	var success *model.Run
+	if model.Failing(run.Status) {
+		prev, err := s.Store.LastSuccessBefore(r.Context(), run.JobID, run.StartedAt)
+		switch {
+		case err == nil:
+			success = &prev
+		case !errors.Is(err, sql.ErrNoRows):
+			queryError(w, err)
+			return
+		}
+	}
 	stream := r.URL.Query().Get("stream")
 	var lines []logs.Line
-	switch stream {
-	case "stdout":
+	var compare *logCompare
+	switch {
+	case stream == "stdout":
 		lines = logs.ParseAs(run.Stdout, logs.Stdout)
-	case "stderr":
+	case stream == "stderr":
 		lines = stderr
+	case stream == "compare" && success != nil:
+		compare = compareRuns(*success, run)
 	default:
 		stream = "all"
 		lines = logs.Parse(run.CombinedLog)
@@ -235,13 +252,49 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.render(w, "run.html", page{Title: "Run · " + job.Name, Tab: "runs", Data: struct {
-		Run       model.Run
-		Job       model.Job
-		Stream    string
-		Lines     []logs.Line
-		LastError string
-		Env       *runEnv
-	}{run, job, stream, lines, logs.LastError(stderr), env}})
+		Run         model.Run
+		Job         model.Job
+		Stream      string
+		Lines       []logs.Line
+		LastError   string
+		Env         *runEnv
+		LastSuccess *model.Run
+		Compare     *logCompare
+	}{run, job, stream, lines, logs.LastError(stderr), env, success, compare}})
+}
+
+// compareLines caps each list on the comparison view; logs can be long.
+const compareLines = 200
+
+// logCompare is a failed run's output compared with the last successful run's.
+type logCompare struct {
+	Success                    model.Run
+	Added, Removed             []logs.Line // new in this run; missing from it
+	AddedHidden, RemovedHidden int
+	Truncated                  bool   // either log lost its middle to the capture limit
+	DurationChange, ExitChange string // "" when unchanged or unknown
+}
+
+func compareRuns(success, run model.Run) *logCompare {
+	added, removed := logs.Compare(logs.Parse(success.CombinedLog), logs.Parse(run.CombinedLog))
+	c := &logCompare{Success: success, Truncated: success.Truncated || run.Truncated}
+	c.Added, c.AddedHidden = capLines(added)
+	c.Removed, c.RemovedHidden = capLines(removed)
+	if run.DurationMS != nil && success.DurationMS != nil {
+		now, before := time.Duration(*run.DurationMS)*time.Millisecond, time.Duration(*success.DurationMS)*time.Millisecond
+		c.DurationChange = fmt.Sprintf("%s, the last success took %s", humanDuration(now), humanDuration(before))
+	}
+	if run.ExitCode != nil && success.ExitCode != nil && *run.ExitCode != *success.ExitCode {
+		c.ExitChange = fmt.Sprintf("%d, the last success exited %d", *run.ExitCode, *success.ExitCode)
+	}
+	return c
+}
+
+func capLines(lines []logs.Line) ([]logs.Line, int) {
+	if len(lines) <= compareLines {
+		return lines, 0
+	}
+	return lines[:compareLines], len(lines) - compareLines
 }
 
 // runEnv is a run's recorded environment for the run page. Changed is set for
