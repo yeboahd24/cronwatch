@@ -19,6 +19,12 @@ type Store struct {
 }
 
 func Open(ctx context.Context, dataDir string) (*Store, error) {
+	// The database is opened by file: URL, where a relative path would be
+	// read as a host name.
+	dataDir, err := filepath.Abs(dataDir)
+	if err != nil {
+		return nil, err
+	}
 	// Only tighten permissions on a directory CronWatch creates; an existing
 	// directory may be shared and is the user's to manage.
 	if _, err := os.Stat(dataDir); errors.Is(err, fs.ErrNotExist) {

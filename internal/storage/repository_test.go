@@ -156,3 +156,15 @@ func TestOpenEnablesWAL(t *testing.T) {
 		t.Fatalf("journal_mode = %s", mode)
 	}
 }
+
+func TestOpenRelativeDataDir(t *testing.T) {
+	t.Chdir(t.TempDir())
+	s, err := Open(context.Background(), "data")
+	if err != nil {
+		t.Fatalf("relative data dir: %v", err)
+	}
+	defer s.Close()
+	if _, err := os.Stat("data/cronwatch.db"); err != nil {
+		t.Fatalf("database not created under the relative directory: %v", err)
+	}
+}
