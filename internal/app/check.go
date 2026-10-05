@@ -84,11 +84,11 @@ func runCheck(ctx context.Context, dir string, slugs []string) (int, []string, e
 			}
 			if v.LastRun != nil {
 				if sl, ok := trend.Slow[v.LastRun.ID]; ok {
-					state, word, detail = checkWarning, "slow", fmt.Sprintf("last run took %.1fx the usual %s", sl.Factor, sl.Usual)
+					state, word, detail = checkWarning, "slow", fmt.Sprintf("last run took %.1fx the usual %s", sl.Factor, sl.Usual.Round(time.Second))
 				}
 			}
 			if state == checkOK && trend.Drift != nil {
-				state, word, detail = checkWarning, "getting slower", fmt.Sprintf("%s over the last 7 days, up %d%% from %s", trend.Drift.Recent, trend.Drift.Percent, trend.Drift.Prior)
+				state, word, detail = checkWarning, "getting slower", fmt.Sprintf("%s over the last 7 days, up %d%% from %s", trend.Drift.Recent.Round(time.Second), trend.Drift.Percent, trend.Drift.Prior.Round(time.Second))
 			}
 		}
 		counts[state]++

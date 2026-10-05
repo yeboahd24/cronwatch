@@ -6,6 +6,9 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/yeboahd24/cronwatch/internal/storage"
 )
 
 func TestCheck(t *testing.T) {
@@ -40,5 +43,42 @@ func TestCheck(t *testing.T) {
 	}
 	if code, out := check("nope"); code != 3 || out != "CRONWATCH UNKNOWN - no job with slug \"nope\"\n" {
 		t.Fatalf("unknown slug: %d %q", code, out)
+	}
+}
+
+func TestCheckWarnsAboutSlowerJobsInWholeSeconds(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	s, err := storage.Open(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := s.UpsertJob(ctx, storage.JobSpec{Slug: "export", Name: "Export", Command: `"true"`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	zero := 0
+	now := time.Now()
+	for i := 37; i >= 1; i-- {
+		d := 2*time.Minute + 4425*time.Millisecond
+		if i <= 7 {
+			d = 3*time.Minute + 6864*time.Millisecond
+		}
+		run, err := s.CreateRun(ctx, job.ID, now.Add(-time.Duration(i)*24*time.Hour))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.CompleteRun(ctx, run.ID, storage.Completion{Ended: run.StartedAt.Add(d), Duration: d, Status: "success", ExitCode: &zero}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.Close()
+	var out bytes.Buffer
+	err = Run(ctx, []string{"check", "--data-dir", dir}, &out, &bytes.Buffer{})
+	if exit, ok := errors.AsType[*ExitError](err); !ok || exit.Code != 1 {
+		t.Fatalf("check: %v", err)
+	}
+	if !strings.Contains(out.String(), "WARNING: Export: 3m7s over the last 7 days, up 50% from 2m4s") {
+		t.Fatalf("output = %q", out.String())
 	}
 }
