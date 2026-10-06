@@ -77,7 +77,10 @@ jobs and logs; it cannot execute commands.
 - **Runs** lists runs across all jobs, newest first, 100 to a page; **Older**
   goes further back. Filter by job, status and the days runs started (in local
   time). The filters are in the URL, so a filtered list can be bookmarked, and
-  each job's page links to its own runs. A run's page shows its last error,
+  each job's page links to its own runs. A running run's page shows its
+  output so far and updates it every few seconds, with how long it has been
+  running and when its output last changed; a run with no new output for 10
+  minutes is pointed out, as it may be stuck. A run's page shows its last error,
   and its output opens at the end, with All / Stdout / Stderr views. Below the
   output is the environment the run started in. When a run fails and its
   environment differs from the last successful run's, a notice at the top
@@ -239,7 +242,13 @@ running a job by hand to test it does not reset its schedule.
 
 When output exceeds `--max-log-bytes`, CronWatch keeps the first and last half
 and replaces the middle with a marker, so the error at the end of a failing job
-is kept. Treat stored logs as sensitive: command output may contain secrets.
+is kept.
+
+While the command runs, CronWatch also saves its output so far, kept within the
+same limit, every 5 seconds when there is new output (every 30 seconds once it
+is over 1 MiB). A long or stuck job can be looked at on the dashboard before it
+ends, and a run whose `cronwatch` process is killed keeps the output it had
+reached. The final output replaces it when the run ends. Treat stored logs as sensitive: command output may contain secrets.
 
 Each run also records the environment it started in: the working directory,
 the user, the names of all environment variables, and the values of `PATH`,

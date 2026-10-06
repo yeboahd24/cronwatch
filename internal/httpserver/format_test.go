@@ -68,3 +68,11 @@ func TestHumanKB(t *testing.T) {
 		}
 	}
 }
+
+func TestElapsed(t *testing.T) {
+	for d, want := range map[time.Duration]string{2600 * time.Millisecond: "3s", 0: "0s", -time.Second: "0s", 90 * time.Second: "1m 30s", 2 * time.Hour: "2h"} {
+		if got := elapsed(d); got != want {
+			t.Errorf("elapsed(%v) = %q, want %q", d, got, want)
+		}
+	}
+}

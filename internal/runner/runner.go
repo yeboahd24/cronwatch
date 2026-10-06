@@ -94,15 +94,77 @@ func (s *stream) flush() {
 	}
 }
 
-func Execute(ctx context.Context, command []string, echoStdout, echoStderr io.Writer, maxLogBytes int64, onLine LineFunc) (Result, error) {
+// Output is the output captured so far, as kept within the log limits.
+type Output struct {
+	Stdout, Stderr, Combined string
+	Truncated                bool
+	Bytes                    int64 // written so far, including any dropped
+}
+
+// Options configures Execute.
+type Options struct {
+	// Stdout and Stderr, if not nil, also receive the command's output.
+	Stdout, Stderr io.Writer
+	// MaxLogBytes bounds the output kept per stream; the combined log keeps
+	// twice that.
+	MaxLogBytes int64
+	// OnLine, if not nil, sees every line as it is captured.
+	OnLine LineFunc
+	// Progress, if not nil, is called from another goroutine with the output
+	// so far, at most every ProgressEvery and only when there is new output,
+	// while the command runs. Execute waits for a call in progress before it
+	// returns. ProgressAfter, if not zero, is the slower interval used once
+	// the output kept has grown past ProgressLarge bytes.
+	Progress                     func(Output)
+	ProgressEvery, ProgressAfter time.Duration
+	ProgressLarge                int
+}
+
+// snapshot returns the output so far. The caller holds c.mu.
+func (c *capture) snapshot() Output {
+	return Output{Stdout: c.stdout.String(), Stderr: c.stderr.String(), Combined: c.combined.String(),
+		Truncated: c.stdout.Truncated() || c.stderr.Truncated() || c.combined.Truncated(), Bytes: c.stdout.total + c.stderr.total}
+}
+
+// reportProgress calls opts.Progress with new output until done is closed.
+func reportProgress(c *capture, opts Options, done <-chan struct{}) {
+	every := opts.ProgressEvery
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+	var reported int64
+	var last time.Time // of the last report
+	for {
+		select {
+		case <-done:
+			return
+		case <-ticker.C:
+		}
+		c.mu.Lock()
+		if c.stdout.total+c.stderr.total == reported {
+			c.mu.Unlock()
+			continue
+		}
+		out := c.snapshot()
+		c.mu.Unlock()
+		size := len(out.Stdout) + len(out.Stderr) + len(out.Combined)
+		if opts.ProgressAfter > 0 && size > opts.ProgressLarge && !last.IsZero() && time.Since(last) < opts.ProgressAfter {
+			continue
+		}
+		reported, last = out.Bytes, time.Now()
+		opts.Progress(out)
+	}
+}
+
+func Execute(ctx context.Context, command []string, opts Options) (Result, error) {
 	var result Result
+	maxLogBytes := opts.MaxLogBytes
 	if maxLogBytes < 0 {
 		return result, errors.New("max log bytes must be non-negative")
 	}
-	c := &capture{stdout: newBoundedBuffer(maxLogBytes), stderr: newBoundedBuffer(maxLogBytes), combined: newBoundedBuffer(2 * maxLogBytes), onLine: onLine}
+	c := &capture{stdout: newBoundedBuffer(maxLogBytes), stderr: newBoundedBuffer(maxLogBytes), combined: newBoundedBuffer(2 * maxLogBytes), onLine: opts.OnLine}
 	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
-	stdoutStream := &stream{c: c, dst: c.stdout, echo: echoStdout}
-	stderrStream := &stream{c: c, dst: c.stderr, echo: echoStderr, stderr: true}
+	stdoutStream := &stream{c: c, dst: c.stdout, echo: opts.Stdout}
+	stderrStream := &stream{c: c, dst: c.stderr, echo: opts.Stderr, stderr: true}
 	cmd.Stdout = stdoutStream
 	cmd.Stderr = stderrStream
 	// Run the child in its own process group so cancellation also reaches
@@ -110,9 +172,16 @@ func Execute(ctx context.Context, command []string, echoStdout, echoStderr io.Wr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM) }
 	cmd.WaitDelay = 5 * time.Second
+	var progress sync.WaitGroup
+	done := make(chan struct{})
+	if opts.Progress != nil && opts.ProgressEvery > 0 {
+		progress.Go(func() { reportProgress(c, opts, done) })
+	}
 	started := time.Now()
 	err := cmd.Run()
 	result.Duration = time.Since(started)
+	close(done)
+	progress.Wait()
 	if ctx.Err() != nil && cmd.Process != nil {
 		// WaitDelay's SIGKILL reaches only the child; finish off the rest of
 		// its group, such as grandchildren that ignored SIGTERM.
@@ -127,11 +196,9 @@ func Execute(ctx context.Context, command []string, echoStdout, echoStderr io.Wr
 	c.mu.Lock()
 	stdoutStream.flush()
 	stderrStream.flush()
-	result.Stdout = c.stdout.String()
-	result.Stderr = c.stderr.String()
-	result.Combined = c.combined.String()
-	result.Truncated = c.stdout.Truncated() || c.stderr.Truncated() || c.combined.Truncated()
+	out := c.snapshot()
 	c.mu.Unlock()
+	result.Stdout, result.Stderr, result.Combined, result.Truncated = out.Stdout, out.Stderr, out.Combined, out.Truncated
 	result.Status = "success"
 	result.Usage = usage(cmd.ProcessState)
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {

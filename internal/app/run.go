@@ -302,7 +302,7 @@ func runCommand(ctx context.Context, args []string, stdout, stderr io.Writer) er
 	if err := s.SetRunEnv(ctx, run.ID, runenv.Capture()); err != nil {
 		fmt.Fprintf(stderr, "cronwatch: warning: could not record the environment: %v\n", err)
 	}
-	result, status, reason, runErr := execute(ctx, opts, stdout, stderr)
+	result, status, reason, runErr := execute(ctx, opts, saveOutput(s, run.ID, stderr), stdout, stderr)
 	code := result.ExitCode
 	// A cancelled context cannot be used to save the final state.
 	finishCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -321,9 +321,35 @@ func runCommand(ctx context.Context, args []string, stdout, stderr io.Writer) er
 	return finalExit(status, code, runErr, opts.StrictExit)
 }
 
+// How often a running command's output is saved, while it changes: every
+// liveEvery, or every liveSlowEvery once it is over liveLarge bytes, so a
+// job with a lot of output does not keep rewriting megabytes. Tests shorten
+// them.
+var (
+	liveEvery     = 5 * time.Second
+	liveSlowEvery = 30 * time.Second
+	liveLarge     = 1 << 20
+)
+
+// saveOutput returns a runner progress function that saves the output so far
+// of the run with id. Saving is best effort: a failure is reported once and
+// does not affect the run.
+func saveOutput(s *storage.Store, id string, stderr io.Writer) func(runner.Output) {
+	warned := false
+	return func(out runner.Output) {
+		ctx, cancel := context.WithTimeout(context.Background(), liveEvery)
+		defer cancel()
+		if err := s.SaveRunOutput(ctx, id, out, time.Now()); err != nil && !warned {
+			warned = true
+			fmt.Fprintf(stderr, "cronwatch: warning: could not save the output so far: %v\n", err)
+		}
+	}
+}
+
 // execute runs the command with opts' output, timeout and rules, and judges
-// the result.
-func execute(ctx context.Context, opts runOptions, stdout, stderr io.Writer) (result runner.Result, status, reason string, runErr error) {
+// the result. save, if not nil, receives the output so far while the command
+// runs.
+func execute(ctx context.Context, opts runOptions, save func(runner.Output), stdout, stderr io.Writer) (result runner.Result, status, reason string, runErr error) {
 	var out, errOut io.Writer
 	if !opts.NoEcho {
 		out = stdout
@@ -336,7 +362,9 @@ func execute(ctx context.Context, opts runOptions, stdout, stderr io.Writer) (re
 		defer cancelRun()
 	}
 	var seen outputSeen
-	result, runErr = runner.Execute(runCtx, opts.Command, out, errOut, opts.MaxLogBytes, opts.Rules.watch(&seen))
+	result, runErr = runner.Execute(runCtx, opts.Command, runner.Options{Stdout: out, Stderr: errOut,
+		MaxLogBytes: opts.MaxLogBytes, OnLine: opts.Rules.watch(&seen),
+		Progress: save, ProgressEvery: liveEvery, ProgressAfter: liveSlowEvery, ProgressLarge: liveLarge})
 	status, reason = opts.Rules.judge(result, seen)
 	if reason != "" && status != "success" {
 		fmt.Fprintf(stderr, "cronwatch: %s: %s\n", status, reason)
@@ -374,6 +402,6 @@ func runUnrecorded(ctx context.Context, opts runOptions, lock *os.File, locked b
 		fmt.Fprintln(stderr, "cronwatch: skipped: another run of this job was still running (--no-overlap)")
 		return nil
 	}
-	result, status, _, runErr := execute(ctx, opts, stdout, stderr)
+	result, status, _, runErr := execute(ctx, opts, nil, stdout, stderr)
 	return finalExit(status, result.ExitCode, runErr, opts.StrictExit)
 }

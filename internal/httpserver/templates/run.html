@@ -6,7 +6,7 @@
   {{template "status" .Run.Status}}
 </div>
 {{if and .Run.Reason (ne .Run.Status "success")}}<div class="error-callout{{if eq .Run.Status "skipped"}} is-muted{{end}}" role="note"><span class="error-label">{{status .Run.Status}}</span><span>{{.Run.Reason}}</span></div>
-{{else if .LastError}}<div class="error-callout" role="note"><span class="error-label">Last error</span><code>{{.LastError}}</code></div>{{end}}
+{{else if and .LastError (ne .Run.Status "running")}}<div class="error-callout" role="note"><span class="error-label">Last error</span><code>{{.LastError}}</code></div>{{end}}
 {{with .History}}<p class="failure-history">{{if .Earlier}}<span class="badge">Seen before</span> Same error as {{.Earlier}} earlier {{if eq .Earlier 1}}run{{else}}runs{{end}}, first seen {{template "time" .FirstSeen}}.{{else}}<span class="badge badge-new">New error</span> The first time this job failed this way.{{end}} <a href="/jobs/{{$.Data.Job.ID}}#failures">All failure types</a></p>{{end}}
 {{with .Env}}{{with .Changed}}<div class="env-callout" role="note">
   <p class="env-callout-title">Environment changed since the <a href="/runs/{{.Since.ID}}">last successful run</a> {{template "time" .Since.StartedAt}}</p>
@@ -64,8 +64,8 @@
 {{if .Removed}}<div class="log-viewer" tabindex="0" aria-label="Lines from the last success missing in this run">{{template "loglines" .Removed}}</div>
 {{else}}<div class="panel"><p class="empty">Nothing missing: every line of the last success appears in this run.</p></div>{{end}}
 {{else}}
-{{if .Lines}}<div class="log-viewer log-viewer-tall" data-scroll-end tabindex="0" aria-label="Run output">{{template "loglines" .Lines}}</div>
-{{else}}<div class="panel"><p class="empty">No output on this stream.</p></div>{{end}}
+{{if eq .Run.Status "running"}}<div id="run-live" data-live="/runs/{{.Run.ID}}/live?stream={{.Stream}}">{{template "run_live" .}}</div>
+{{else}}{{template "run_output" .Lines}}{{end}}
 {{end}}
 {{with .Env}}
 <h2>Environment</h2>
@@ -84,3 +84,15 @@
 {{end}}
 {{end}}
 {{template "foot"}}{{end}}
+
+{{define "run_output"}}{{if .}}<div class="log-viewer log-viewer-tall" data-scroll-end tabindex="0" aria-label="Run output">{{template "loglines" .}}</div>
+{{else}}<div class="panel"><p class="empty">No output on this stream.</p></div>{{end}}{{end}}
+
+{{/* run_live is the output of a running run, which the page refreshes. */}}
+{{define "run_live"}}<p class="live-note"><span class="live-dot" aria-hidden="true"></span>Running for {{since .Run.StartedAt}}.
+{{- if .Run.OutputAt}} Output last changed {{since .Run.OutputAt}} ago{{if .Quiet}}, <span class="text-warning">no new output since</span>{{end}}.
+{{- else}} No output saved yet{{if .Quiet}}, <span class="text-warning">none since it started</span>{{end}}.{{end}}
+Updates every few seconds.</p>
+{{template "run_output" .Lines}}{{end}}
+
+{{define "run_live_partial"}}<div id="run-live">{{template "run_live" .}}</div>{{end}}
