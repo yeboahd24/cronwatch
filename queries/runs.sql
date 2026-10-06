@@ -157,3 +157,8 @@ FROM runs JOIN jobs ON jobs.id = runs.job_id
 WHERE runs.status = 'running' AND runs.pid IS NULL AND jobs.max_duration_seconds IS NOT NULL
   AND (sqlc.narg(job_id) IS NULL OR runs.job_id = sqlc.narg(job_id))
 ORDER BY runs.started_at;
+
+-- name: SaveRunOutput :execrows
+-- The output so far of a run still running; a finished run is left alone.
+UPDATE runs SET stdout = ?, stderr = ?, combined_log = ?, truncated = ?, output_at = ?
+WHERE id = ? AND status = 'running';

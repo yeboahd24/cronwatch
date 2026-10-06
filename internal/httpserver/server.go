@@ -90,6 +90,18 @@ func New(store *storage.Store, opts Options) (*Server, error) {
 		"failure": failureSummary,
 		"dur":     humanDuration,
 		"ms":      func(ms int64) string { return humanDuration(time.Duration(ms) * time.Millisecond) },
+		// since is how long ago t was, for a time.Time or *time.Time.
+		"since": func(t any) string {
+			switch t := t.(type) {
+			case time.Time:
+				return elapsed(s.now().Sub(t))
+			case *time.Time:
+				if t != nil {
+					return elapsed(s.now().Sub(*t))
+				}
+			}
+			return "—"
+		},
 	}
 	t, err := template.New("").Funcs(funcs).ParseFS(assets, "templates/*.html")
 	if err != nil {
@@ -115,6 +127,7 @@ func New(store *storage.Store, opts Options) (*Server, error) {
 	r.Get("/runs", s.handleRuns)
 	r.Get("/runs/{id}", s.handleRun)
 	r.Get("/runs/{id}/log", s.handleRunLog)
+	r.Get("/runs/{id}/live", s.handleRunLive)
 	r.Get("/logs", s.handleLogs)
 	r.Get("/timeline", s.handleTimeline)
 	if opts.Metrics {
@@ -315,16 +328,10 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 	stream := r.URL.Query().Get("stream")
 	var lines []logs.Line
 	var compare *logCompare
-	switch {
-	case stream == "stdout":
-		lines = logs.ParseAs(run.Stdout, logs.Stdout)
-	case stream == "stderr":
-		lines = stderr
-	case stream == "compare" && success != nil:
+	if stream == "compare" && success != nil {
 		compare = compareRuns(*success, run)
-	default:
-		stream = "all"
-		lines = logs.Parse(run.CombinedLog)
+	} else {
+		stream, lines = runLines(run, stream)
 	}
 	env, err := s.loadRunEnv(r, run)
 	if err != nil {
@@ -369,7 +376,55 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 		History     *storage.FailureHistory
 		Slow        *durations.Slowness
 		Alerts      []storage.Alert
-	}{run, job, stream, lines, logs.LastError(stderr), env, success, compare, history, slow, alerts}})
+		Quiet       bool
+	}{run, job, stream, lines, logs.LastError(stderr), env, success, compare, history, slow, alerts, s.quiet(run)}})
+}
+
+// quietAfter is how long a running run may go without new output before its
+// page points it out.
+const quietAfter = 10 * time.Minute
+
+// quiet reports whether a running run has gone quietAfter without new output.
+func (s *Server) quiet(run model.Run) bool {
+	last := run.StartedAt
+	if run.OutputAt != nil {
+		last = *run.OutputAt
+	}
+	return run.Status == "running" && s.now().Sub(last) > quietAfter
+}
+
+// runLines returns the run's output on stream: stdout, stderr, or both
+// ("all", also for anything else).
+func runLines(run model.Run, stream string) (string, []logs.Line) {
+	switch stream {
+	case "stdout":
+		return stream, logs.ParseAs(run.Stdout, logs.Stdout)
+	case "stderr":
+		return stream, logs.ParseAs(run.Stderr, logs.Stderr)
+	}
+	return "all", logs.Parse(run.CombinedLog)
+}
+
+// handleRunLive serves the output so far of a running run, which its page
+// fetches every few seconds. Once the run has ended it serves an empty
+// element marked finished, and the page reloads.
+func (s *Server) handleRunLive(w http.ResponseWriter, r *http.Request) {
+	run, err := s.Store.GetRun(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		queryError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	if run.Status != "running" {
+		_, _ = w.Write([]byte(`<div id="run-live" data-finished></div>`))
+		return
+	}
+	_, lines := runLines(run, r.URL.Query().Get("stream"))
+	s.render(w, "run_live_partial", struct {
+		Run   model.Run
+		Lines []logs.Line
+		Quiet bool
+	}{run, lines, s.quiet(run)})
 }
 
 // handleRunLog serves a run's output as a plain-text download: the combined

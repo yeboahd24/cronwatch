@@ -100,4 +100,5 @@ type Run struct {
 	UserCpuMs        sql.NullInt64
 	SysCpuMs         sql.NullInt64
 	FailureSignature sql.NullString
+	OutputAt         sql.NullString
 }

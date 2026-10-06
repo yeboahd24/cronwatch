@@ -419,6 +419,21 @@ form.history-filter { flex-basis: auto; }
 .archived-jobs { margin: 10px 4px 0; color: var(--muted); font-size: 14px; }
 .archived-jobs a { color: inherit; }
 
+/* Live output of a running run */
+
+.live-note { margin: 0 0 10px; color: var(--muted); font-size: 14px; }
+.live-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: var(--running);
+  animation: live-pulse 1.6s ease-in-out infinite;
+}
+@keyframes live-pulse { 50% { opacity: 0.3; } }
+@media (prefers-reduced-motion: reduce) { .live-dot { animation: none; } }
+
 /* Alerts */
 
 .alerts-table details { margin-top: 6px; }

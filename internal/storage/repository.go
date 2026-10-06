@@ -92,7 +92,8 @@ func convertRun(row db.Run) (model.Run, error) {
 		v := int(row.ExitCode.Int64)
 		r.ExitCode = &v
 	}
-	return r, nil
+	r.OutputAt, err = parseNullTime(row.OutputAt)
+	return r, err
 }
 
 // DefaultGrace is the missed-run grace period for jobs that never set one.

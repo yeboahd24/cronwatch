@@ -63,6 +63,9 @@ type Run struct {
 	// FailureSignature groups failed runs that failed the same way; empty
 	// for runs that did not fail.
 	FailureSignature string
+	// OutputAt is when the output saved while the run was running last
+	// changed; nil if none was saved.
+	OutputAt *time.Time
 }
 
 // Usage is the resources a run's command used.

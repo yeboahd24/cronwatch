@@ -54,6 +54,15 @@ func shortTime(t, now time.Time) string {
 func fullTime(t time.Time) string { return t.Local().Format("2006-01-02 15:04:05 MST") }
 
 // humanDuration formats d compactly: "<1ms", "8ms", "0.8s", "42s", "3m 12s", "1h 4m".
+// elapsed is humanDuration to the second, for how long ago something was.
+func elapsed(d time.Duration) string {
+	d = max(d.Round(time.Second), 0)
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	return humanDuration(d)
+}
+
 func humanDuration(d time.Duration) string {
 	switch {
 	case d < time.Millisecond:

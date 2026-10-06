@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/yeboahd24/cronwatch/internal/model"
+	"github.com/yeboahd24/cronwatch/internal/runner"
 	"github.com/yeboahd24/cronwatch/internal/storage"
 )
 
@@ -259,5 +260,52 @@ func TestLogsPagesAndFilters(t *testing.T) {
 	}
 	if code, _ := fetch(t, server, "/logs?status=nope"); code != http.StatusBadRequest {
 		t.Fatalf("bad status: %d", code)
+	}
+}
+
+func TestRunningRunShowsLiveOutput(t *testing.T) {
+	ctx := context.Background()
+	s, err := storage.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	job, err := s.UpsertJob(ctx, storage.JobSpec{Slug: "long", Name: "Long", Command: `"true"`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	run, err := s.CreateRun(ctx, job.ID, now.Add(-time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := New(s, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Before any output is saved, an hour-long silence is pointed out.
+	_, page := fetch(t, server, "/runs/"+run.ID)
+	for _, want := range []string{`<div id="run-live" data-live="/runs/` + run.ID + `/live?stream=all">`, "Running for 1h", "No output saved yet", "none since it started"} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("run page lacks %q:\n%s", want, page)
+		}
+	}
+	if err := s.SaveRunOutput(ctx, run.ID, runner.Output{Stdout: "copying\n", Stderr: "slow disk\n", Combined: "copying\n\x02slow disk\n"}, now.Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	code, live := fetch(t, server, "/runs/"+run.ID+"/live?stream=stderr")
+	if code != http.StatusOK || !strings.HasPrefix(live, `<div id="run-live">`) || !strings.Contains(live, "slow disk") ||
+		strings.Contains(live, "copying") || !strings.Contains(live, "Output last changed 1m ago.") || strings.Contains(live, "no new output") {
+		t.Fatalf("live partial (%d):\n%s", code, live)
+	}
+	code2 := 0
+	if err := s.CompleteRun(ctx, run.ID, storage.Completion{Ended: now, Status: "success", ExitCode: &code2, Stdout: "copying\ndone\n", Combined: "copying\ndone\n"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, live := fetch(t, server, "/runs/"+run.ID+"/live"); live != `<div id="run-live" data-finished></div>` {
+		t.Fatalf("live partial after the run ended: %q", live)
+	}
+	if _, page := fetch(t, server, "/runs/"+run.ID); strings.Contains(page, "run-live") || !strings.Contains(page, "done") {
+		t.Fatal("a finished run's page still refreshes, or lacks its output")
 	}
 }
