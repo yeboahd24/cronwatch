@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/yeboahd24/cronwatch/internal/config"
 	"github.com/yeboahd24/cronwatch/internal/httpserver"
+	"github.com/yeboahd24/cronwatch/internal/hub"
 	"github.com/yeboahd24/cronwatch/internal/storage"
 )
 
@@ -35,8 +37,29 @@ func serveCommand(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	metrics := fs.Bool("metrics", false, "serve Prometheus metrics at /metrics")
 	dataDir := fs.String("data-dir", "", "data directory")
 	syncTab := fs.Bool("sync-crontab", true, "register jobs found in the user's crontab")
+	hubAddr := fs.String("hub-addr", "", "act as a hub: accept reports from other servers on this `address`, such as :8766")
+	hubCert := fs.String("hub-cert", "", "TLS certificate `file` (PEM) for --hub-addr; required unless it is a loopback address")
+	hubKey := fs.String("hub-key", "", "TLS key `file` (PEM) for --hub-addr")
+	var rc reportConfig
+	fs.StringVar(&rc.to, "report-to", "", "report this server's jobs every minute to the hub at this `URL`, such as https://hub.example:8766")
+	fs.StringVar(&rc.tokenFile, "report-token-file", "", "read the hub token from this `file` (default $"+envReportToken+")")
+	fs.StringVar(&rc.ca, "report-ca", "", "trust the hub certificate in this PEM `file` instead of the system's")
 	if err := parseFlags(fs, args, stdout); err != nil {
 		return err
+	}
+	if (*hubCert == "") != (*hubKey == "") {
+		return errors.New("--hub-cert and --hub-key go together")
+	}
+	if *hubAddr != "" && *hubCert == "" && !loopbackAddress(*hubAddr) {
+		return errors.New("--hub-addr on a non-loopback address needs --hub-cert and --hub-key, so tokens are not sent in the clear; behind a reverse proxy that terminates TLS, use a loopback address")
+	}
+	var report *reporter
+	if rc.to != "" {
+		client, err := rc.client(stderr)
+		if err != nil {
+			return err
+		}
+		report = &reporter{client: client, stderr: stderr}
 	}
 	if fs.NArg() != 0 {
 		return errors.New("unexpected serve arguments")
@@ -59,7 +82,7 @@ func serveCommand(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		return err
 	}
 	defer s.Close()
-	web, err := httpserver.New(s, httpserver.Options{AnyHost: *public, Metrics: *metrics})
+	web, err := httpserver.New(s, httpserver.Options{AnyHost: *public, Metrics: *metrics, Version: Version})
 	if err != nil {
 		return err
 	}
@@ -70,12 +93,40 @@ func serveCommand(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	server := &http.Server{Handler: web.Router, ReadHeaderTimeout: 5 * time.Second}
 	fmt.Fprintf(stdout, "CronWatch UI: http://%s\n", listener.Addr())
 	done := make(chan struct{})
-	go maintenanceLoop(ctx, done, s, *syncTab, stderr)
+	var hubServer *http.Server
+	if *hubAddr != "" {
+		hubListener, err := net.Listen("tcp", *hubAddr)
+		if err != nil {
+			return fmt.Errorf("--hub-addr: %w", err)
+		}
+		hubServer = &http.Server{Handler: hub.Handler(s, time.Now, log.New(stderr, "", 0)), ReadHeaderTimeout: 5 * time.Second,
+			ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second}
+		scheme := "https"
+		if *hubCert == "" {
+			scheme = "http"
+		}
+		fmt.Fprintf(stdout, "CronWatch hub: accepting reports at %s://%s%s\n", scheme, hubListener.Addr(), hub.ReportPath)
+		go func() {
+			var err error
+			if *hubCert != "" {
+				err = hubServer.ServeTLS(hubListener, *hubCert, *hubKey)
+			} else {
+				err = hubServer.Serve(hubListener)
+			}
+			if err != nil && !errors.Is(err, http.ErrServerClosed) {
+				fmt.Fprintln(stderr, "hub:", err)
+			}
+		}()
+	}
+	go maintenanceLoop(ctx, done, s, *syncTab, report, stderr)
 	go func() {
 		select {
 		case <-ctx.Done():
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			_ = server.Shutdown(shutdownCtx)
+			if hubServer != nil {
+				_ = hubServer.Shutdown(shutdownCtx)
+			}
 			cancel()
 		case <-done:
 		}
@@ -91,7 +142,7 @@ func serveCommand(ctx context.Context, args []string, stdout, stderr io.Writer) 
 // maintenanceLoop periodically registers crontab jobs, closes out runs whose
 // cronwatch process died and records missed occurrences, so the dashboard is
 // current even when nobody is looking at it.
-func maintenanceLoop(ctx context.Context, done <-chan struct{}, s *storage.Store, syncTab bool, stderr io.Writer) {
+func maintenanceLoop(ctx context.Context, done <-chan struct{}, s *storage.Store, syncTab bool, report *reporter, stderr io.Writer) {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 	lastProblems := ""
@@ -127,6 +178,10 @@ func maintenanceLoop(ctx context.Context, done <-chan struct{}, s *storage.Store
 		}
 		if err := maintain(ctx, s, stderr); err != nil && ctx.Err() == nil {
 			fmt.Fprintln(stderr, "maintenance:", err)
+		}
+		// Report after maintenance, so missed runs are up to date.
+		if report != nil {
+			report.send(ctx, s)
 		}
 		select {
 		case <-ctx.Done():

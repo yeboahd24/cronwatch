@@ -86,6 +86,10 @@ func dispatch(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		return checkCommand(ctx, args[1:], stdout)
 	case "ping":
 		return pingCommand(ctx, args[1:], stdout, stderr)
+	case "hosts":
+		return hostsCommand(ctx, args[1:], stdout)
+	case "report":
+		return reportCommand(ctx, args[1:], stdout, stderr)
 	case "doctor":
 		return doctorCommand(ctx, args[1:], stdout)
 	case "pause", "resume", "archive":
@@ -120,6 +124,8 @@ Usage:
   cronwatch crontab-history [--limit N] [JOB-SLUG]
   cronwatch check [JOB-SLUG...]
   cronwatch doctor
+  cronwatch hosts list | add NAME | token NAME | remove NAME
+  cronwatch report --to URL [--token-file FILE]
   cronwatch ping [--start | --fail] JOB-SLUG
   cronwatch timers [--all] [--json]
   cronwatch pause [--for DURATION] JOB-SLUG...

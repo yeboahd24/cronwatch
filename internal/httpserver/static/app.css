@@ -448,6 +448,14 @@ form.history-filter { flex-basis: auto; }
 @keyframes live-pulse { 50% { opacity: 0.3; } }
 @media (prefers-reduced-motion: reduce) { .live-dot { animation: none; } }
 
+/* Servers */
+
+.page-title small { display: block; margin-top: 3px; color: var(--muted); font-size: 12px; text-align: right; }
+tr.is-stale td { opacity: 0.65; }
+tr.is-stale td:first-child { opacity: 1; }
+.error-callout.is-stale-callout { border-color: var(--warning); background: rgba(251, 191, 36, 0.06); }
+.error-callout.is-stale-callout .error-label { color: var(--warning); }
+
 /* Alerts */
 
 .alerts-table details { margin-top: 6px; }

@@ -47,6 +47,15 @@ type Environment struct {
 	CreatedAt string
 }
 
+type Host struct {
+	ID         string
+	Name       string
+	TokenHash  string
+	CreatedAt  string
+	ReportedAt sql.NullString
+	Report     sql.NullString
+}
+
 type Job struct {
 	ID                 string
 	Slug               string

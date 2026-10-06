@@ -37,6 +37,7 @@ type Server struct {
 	Templates *template.Template
 	Store     *storage.Store
 	now       func() time.Time
+	version   string // of CronWatch, for this server's report on the Servers page
 }
 
 // Options configures the web server.
@@ -46,6 +47,8 @@ type Options struct {
 	AnyHost bool
 	// Metrics serves Prometheus metrics at /metrics.
 	Metrics bool
+	// Version is CronWatch's version.
+	Version string
 }
 
 // page is the data every full page template receives.
@@ -64,7 +67,7 @@ type logExcerpt struct {
 }
 
 func New(store *storage.Store, opts Options) (*Server, error) {
-	s := &Server{Store: store, now: time.Now}
+	s := &Server{Store: store, now: time.Now, version: opts.Version}
 	funcs := template.FuncMap{
 		"status": statusLabel,
 		"when":   func(t time.Time) string { return shortTime(t, s.now()) },
@@ -83,6 +86,7 @@ func New(store *storage.Store, opts Options) (*Server, error) {
 			return humanDuration(time.Duration(*ms) * time.Millisecond)
 		},
 		"seconds": func(n int64) string { return humanDuration(time.Duration(n) * time.Second) },
+		"elapsed": elapsed,
 		"shell":   shellCommand,
 		"join":    strings.Join,
 		"kb":      humanKB,
@@ -130,6 +134,8 @@ func New(store *storage.Store, opts Options) (*Server, error) {
 	r.Get("/runs/{id}/live", s.handleRunLive)
 	r.Get("/logs", s.handleLogs)
 	r.Get("/timeline", s.handleTimeline)
+	r.Get("/servers", s.handleServers)
+	r.Get("/servers/{name}", s.handleServer)
 	if opts.Metrics {
 		r.Get("/metrics", s.handleMetrics)
 	}

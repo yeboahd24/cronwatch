@@ -1,0 +1,33 @@
+{{define "server.html"}}{{template "head" .}}
+{{with .Data}}
+<a href="/servers" class="back"><span aria-hidden="true">←</span> Servers</a>
+<div class="page-title">
+  <div><h1>{{.State.Host.Name}}</h1>{{with .State.Report}}{{with .Hostname}}<p class="subtitle">{{.}}</p>{{end}}{{end}}</div>
+  <div>{{template "host_status" .State}}</div>
+</div>
+{{if eq .State.Status "stale"}}<div class="error-callout is-stale-callout" role="note"><span class="error-label">Stale</span><span>No report for {{elapsed .State.Age}}: the server, its <code>cronwatch serve</code> or the network to this hub may be down. The jobs below are as it last reported them.</span></div>
+{{else if eq .State.Status "never"}}<div class="error-callout is-muted" role="note"><span class="error-label">Never reported</span><span>Run <code>cronwatch serve --report-to</code> on it with the token from <code>cronwatch hosts add</code>.</span></div>{{end}}
+<section class="panel details">
+  <dl>
+    {{if .Local}}<dt>Last report</dt><dd>Live: this is the server you are viewing</dd>
+    {{else}}<dt>Last report</dt><dd>{{with .State.Host.ReportedAt}}{{template "time" .}} ({{elapsed $.Data.State.Age}} ago){{else}}Never{{end}}</dd>
+    <dt>Added</dt><dd>{{template "time" .State.Host.CreatedAt}}</dd>{{end}}
+    {{with .State.Report}}
+    <dt>CronWatch</dt><dd>{{.Cronwatch}}</dd>
+    <dt>Missed runs</dt><dd>{{with .MaintainedAt}}Last checked {{template "time" .}}{{else}}<span class="text-warning">Never checked on this server</span>{{end}}</dd>
+    {{end}}
+  </dl>
+</section>
+<h2>Jobs</h2>
+<section class="panel table-wrap">
+  <table>
+    <thead><tr><th scope="col">Server</th><th scope="col">Job</th><th scope="col">Status</th><th scope="col">Last run</th><th scope="col">Next expected</th></tr></thead>
+    <tbody>
+    {{- range .Jobs}}{{template "server_job" .}}{{else}}
+    <tr><td colspan="5" class="empty">No jobs reported.</td></tr>
+    {{- end}}
+    </tbody>
+  </table>
+</section>
+{{end}}
+{{template "foot"}}{{end}}
