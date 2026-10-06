@@ -102,3 +102,25 @@ type Run struct {
 	FailureSignature sql.NullString
 	OutputAt         sql.NullString
 }
+
+type RunSummary struct {
+	ID               string
+	JobID            string
+	StartedAt        string
+	EndedAt          sql.NullString
+	DurationMs       sql.NullInt64
+	Status           string
+	ExitCode         sql.NullInt64
+	Truncated        int64
+	CreatedAt        string
+	Pid              sql.NullInt64
+	Host             sql.NullString
+	EnvHash          sql.NullString
+	Reason           sql.NullString
+	OverlappedRunID  sql.NullString
+	MaxRssKb         sql.NullInt64
+	UserCpuMs        sql.NullInt64
+	SysCpuMs         sql.NullInt64
+	FailureSignature sql.NullString
+	OutputAt         sql.NullString
+}

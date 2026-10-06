@@ -265,6 +265,36 @@ func convertRuns(rows []db.Run) ([]model.Run, error) {
 	}
 	return out, nil
 }
+
+// RunSummariesForJob returns the job's newest limit runs, newest first,
+// without their output.
+func (s *Store) RunSummariesForJob(ctx context.Context, jobID string, limit int) ([]model.Run, error) {
+	rows, err := db.New(s.DB).ListRunSummariesForJob(ctx, db.ListRunSummariesForJobParams{JobID: jobID, Limit: int64(limit)})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]model.Run, 0, len(rows))
+	for _, row := range rows {
+		r, err := convertRunSummary(row)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+// convertRunSummary converts a run without its output; Stdout, Stderr and
+// CombinedLog are empty.
+func convertRunSummary(r db.RunSummary) (model.Run, error) {
+	return convertRun(db.Run{ID: r.ID, JobID: r.JobID, StartedAt: r.StartedAt, EndedAt: r.EndedAt, DurationMs: r.DurationMs,
+		Status: r.Status, ExitCode: r.ExitCode, Truncated: r.Truncated, CreatedAt: r.CreatedAt, Pid: r.Pid, Host: r.Host,
+		EnvHash: r.EnvHash, Reason: r.Reason, OverlappedRunID: r.OverlappedRunID, MaxRssKb: r.MaxRssKb, UserCpuMs: r.UserCpuMs,
+		SysCpuMs: r.SysCpuMs, FailureSignature: r.FailureSignature, OutputAt: r.OutputAt})
+}
+
+// ListRunsForJob returns the job's newest limit runs, newest first, with
+// their output; lists should use RunSummariesForJob.
 func (s *Store) ListRunsForJob(ctx context.Context, jobID string, limit int) ([]model.Run, error) {
 	rows, err := db.New(s.DB).ListRunsForJob(ctx, db.ListRunsForJobParams{JobID: jobID, Limit: int64(limit)})
 	if err != nil {
@@ -354,7 +384,7 @@ func (s *Store) LatestMissedOccurrence(ctx context.Context, jobID string) (*time
 
 func (s *Store) JobView(ctx context.Context, j model.Job, now time.Time) (model.JobView, error) {
 	v := model.JobView{Job: j, Status: "never_run"}
-	runs, err := s.ListRunsForJob(ctx, j.ID, 1)
+	runs, err := s.RunSummariesForJob(ctx, j.ID, 1)
 	if err != nil {
 		return v, err
 	}

@@ -94,7 +94,8 @@ func Unarchived(views []JobView) []JobView {
 
 type JobView struct {
 	Job
-	Status         string
+	Status string
+	// LastRun is a summary, without the run's output.
 	LastRun        *Run
 	NextExpectedAt *time.Time
 	// MissedAt is the latest missed occurrence while Status is "missed".

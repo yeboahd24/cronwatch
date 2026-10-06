@@ -10,6 +10,7 @@ import (
 
 	"github.com/yeboahd24/cronwatch/internal/logs"
 	"github.com/yeboahd24/cronwatch/internal/model"
+	"github.com/yeboahd24/cronwatch/internal/storage"
 )
 
 // Nagios plugin exit codes.
@@ -84,7 +85,7 @@ func runCheck(ctx context.Context, dir string, slugs []string) (int, []string, e
 		state, word, detail := checkOK, "", ""
 		switch {
 		case model.Failing(v.Status) || v.Status == "missed" || v.Status == "invalid_schedule":
-			state, word, detail = checkCritical, v.Status, checkDetail(v)
+			state, word, detail = checkCritical, v.Status, checkDetail(withOutput(ctx, s, v))
 		default:
 			trend, err := s.JobTrend(ctx, v.ID, 1, now)
 			if err != nil {
@@ -134,4 +135,15 @@ func checkDetail(v model.JobView) string {
 		detail += ": " + v.LastRun.Reason
 	}
 	return detail
+}
+
+// withOutput returns v with its last run's output, which job views leave
+// out. If it cannot be read, v is returned as it is.
+func withOutput(ctx context.Context, s *storage.Store, v model.JobView) model.JobView {
+	if v.LastRun != nil {
+		if run, err := s.GetRun(ctx, v.LastRun.ID); err == nil {
+			v.LastRun = &run
+		}
+	}
+	return v
 }

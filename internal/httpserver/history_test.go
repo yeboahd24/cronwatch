@@ -113,7 +113,7 @@ func TestRunsPagesAndFilters(t *testing.T) {
 	server, s, jobs, created := historyServer(t)
 	ctx := context.Background()
 	// The order every page must follow: newest first, ties by ID.
-	unpaged, err := s.ListRunsPage(ctx, storage.RunFilter{}, nil, -1)
+	unpaged, err := s.ListRunSummaries(ctx, storage.RunFilter{}, nil, -1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func TestRunsPagesAndFilters(t *testing.T) {
 	var paged []string
 	var cursor *storage.RunCursor
 	for {
-		page, err := s.ListRunsPage(ctx, storage.RunFilter{}, cursor, 7)
+		page, err := s.ListRunSummaries(ctx, storage.RunFilter{}, cursor, 7)
 		if err != nil {
 			t.Fatal(err)
 		}

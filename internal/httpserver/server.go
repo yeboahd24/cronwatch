@@ -205,7 +205,13 @@ func (s *Server) loadDashboard(r *http.Request) (dashboard, error) {
 		}
 	}
 	if d.Recent != nil {
-		d.Recent.Lines = logs.Tail(logs.Parse(d.Recent.Run.CombinedLog), recentLogLines)
+		// Job views carry run summaries; the featured run needs its output.
+		run, err := s.Store.GetRun(r.Context(), d.Recent.Run.ID)
+		if err != nil {
+			return dashboard{}, err
+		}
+		d.Recent.Run = run
+		d.Recent.Lines = logs.Tail(logs.Parse(run.CombinedLog), recentLogLines)
 	}
 	return d, nil
 }
@@ -240,7 +246,7 @@ func (s *Server) handleJob(w http.ResponseWriter, r *http.Request) {
 		queryError(w, err)
 		return
 	}
-	runs, err := s.Store.ListRunsForJob(r.Context(), job.ID, runListLimit)
+	runs, err := s.Store.RunSummariesForJob(r.Context(), job.ID, runListLimit)
 	if err != nil {
 		queryError(w, err)
 		return
@@ -534,7 +540,7 @@ func (s *Server) handleRuns(w http.ResponseWriter, r *http.Request) {
 		filterError(w, err)
 		return
 	}
-	runs, err := s.Store.ListRunsPage(r.Context(), f.filter, f.cursor, runListLimit+1)
+	runs, err := s.Store.ListRunSummaries(r.Context(), f.filter, f.cursor, runListLimit+1)
 	if err != nil {
 		queryError(w, err)
 		return

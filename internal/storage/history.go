@@ -49,18 +49,19 @@ func filterArgs(f RunFilter, before *RunCursor) (jobID, status, since, until, be
 	return
 }
 
-// ListRunsPage returns up to limit runs matching f, newest first, starting
-// after before if it is not nil.
-func (s *Store) ListRunsPage(ctx context.Context, f RunFilter, before *RunCursor, limit int) ([]RunWithJob, error) {
-	p := db.ListRunsPageParams{RowLimit: int64(limit)}
+// ListRunSummaries returns up to limit runs matching f, newest first,
+// starting after before if it is not nil. The runs are summaries: their
+// output is not loaded.
+func (s *Store) ListRunSummaries(ctx context.Context, f RunFilter, before *RunCursor, limit int) ([]RunWithJob, error) {
+	p := db.ListRunSummariesPageParams{RowLimit: int64(limit)}
 	p.JobID, p.Status, p.Since, p.Until, p.BeforeTime, p.BeforeID = filterArgs(f, before)
-	rows, err := db.New(s.DB).ListRunsPage(ctx, p)
+	rows, err := db.New(s.DB).ListRunSummariesPage(ctx, p)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]RunWithJob, 0, len(rows))
 	for _, row := range rows {
-		r, err := convertRun(row.Run)
+		r, err := convertRunSummary(row.RunSummary)
 		if err != nil {
 			return nil, err
 		}
@@ -69,7 +70,7 @@ func (s *Store) ListRunsPage(ctx context.Context, f RunFilter, before *RunCursor
 	return out, nil
 }
 
-// SearchRunLogs is ListRunsPage for finished runs whose combined log
+// SearchRunLogs is ListRunSummaries, with output, for finished runs whose combined log
 // contains query, ignoring ASCII case. An empty query matches every run.
 func (s *Store) SearchRunLogs(ctx context.Context, query string, f RunFilter, before *RunCursor, limit int) ([]RunWithJob, error) {
 	p := db.SearchRunLogsParams{Query: query, RowLimit: int64(limit)}
