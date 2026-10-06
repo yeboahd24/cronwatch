@@ -53,11 +53,33 @@ DELETE FROM runs WHERE status != 'running' AND started_at < COALESCE((
 ), '');
 
 -- name: SearchRunLogs :many
+-- Finished runs whose output contains query, ignoring ASCII case, filtered
+-- like ListRunsPage and paged the same way.
 SELECT sqlc.embed(runs), jobs.name AS job_name
 FROM runs JOIN jobs ON jobs.id = runs.job_id
 WHERE runs.status != 'running'
   AND instr(lower(runs.combined_log), lower(sqlc.arg(query))) > 0
-ORDER BY runs.started_at DESC LIMIT sqlc.arg(row_limit);
+  AND (sqlc.narg(job_id) IS NULL OR runs.job_id = sqlc.narg(job_id))
+  AND (sqlc.narg(status) IS NULL OR runs.status = sqlc.narg(status))
+  AND (sqlc.narg(since) IS NULL OR runs.started_at >= sqlc.narg(since))
+  AND (sqlc.narg(until) IS NULL OR runs.started_at < sqlc.narg(until))
+  AND (sqlc.narg(before_time) IS NULL OR runs.started_at < sqlc.narg(before_time)
+       OR (runs.started_at = sqlc.narg(before_time) AND runs.id < sqlc.narg(before_id)))
+ORDER BY runs.started_at DESC, runs.id DESC LIMIT sqlc.arg(row_limit);
+
+-- name: ListRunsPage :many
+-- Runs newest first, optionally of one job, with one status, or started in
+-- [since, until). A page continues after the run (before_time, before_id),
+-- so runs recorded meanwhile do not shift it.
+SELECT sqlc.embed(runs), jobs.name AS job_name
+FROM runs JOIN jobs ON jobs.id = runs.job_id
+WHERE (sqlc.narg(job_id) IS NULL OR runs.job_id = sqlc.narg(job_id))
+  AND (sqlc.narg(status) IS NULL OR runs.status = sqlc.narg(status))
+  AND (sqlc.narg(since) IS NULL OR runs.started_at >= sqlc.narg(since))
+  AND (sqlc.narg(until) IS NULL OR runs.started_at < sqlc.narg(until))
+  AND (sqlc.narg(before_time) IS NULL OR runs.started_at < sqlc.narg(before_time)
+       OR (runs.started_at = sqlc.narg(before_time) AND runs.id < sqlc.narg(before_id)))
+ORDER BY runs.started_at DESC, runs.id DESC LIMIT sqlc.arg(row_limit);
 
 -- name: SetRunEnv :exec
 UPDATE runs SET env_hash = ? WHERE id = ?;

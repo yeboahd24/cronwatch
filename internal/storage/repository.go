@@ -294,24 +294,6 @@ func (s *Store) ListRunsWithJob(ctx context.Context, limit int) ([]RunWithJob, e
 	return out, nil
 }
 
-// SearchRunLogs returns the newest finished runs whose combined log contains
-// query, ignoring ASCII case. An empty query matches every run.
-func (s *Store) SearchRunLogs(ctx context.Context, query string, limit int) ([]RunWithJob, error) {
-	rows, err := db.New(s.DB).SearchRunLogs(ctx, db.SearchRunLogsParams{Query: query, RowLimit: int64(limit)})
-	if err != nil {
-		return nil, err
-	}
-	out := make([]RunWithJob, 0, len(rows))
-	for _, row := range rows {
-		r, e := convertRun(row.Run)
-		if e != nil {
-			return nil, e
-		}
-		out = append(out, RunWithJob{Run: r, JobName: row.JobName})
-	}
-	return out, nil
-}
-
 // processGone reports whether pid definitely no longer exists. EPERM means the
 // process exists under another user, so it is treated as alive.
 func processGone(pid int64) bool {

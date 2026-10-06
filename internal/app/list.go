@@ -2,10 +2,12 @@ package app
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -84,14 +86,23 @@ func jobsCommand(ctx context.Context, args []string, stdout io.Writer) error {
 }
 
 func runsCommand(ctx context.Context, args []string, stdout io.Writer) error {
-	fs := newFlagSet("runs", "cronwatch runs [flags] [job-slug]", "List the 100 most recent runs, optionally for one job.")
+	fs := newFlagSet("runs", "cronwatch runs [flags] [job-slug]", "List the most recent runs, newest first, optionally for one job.")
 	dir := fs.String("data-dir", "", "data directory")
 	asJSON := fs.Bool("json", false, "print a JSON array instead of a table")
+	status := fs.String("status", "", "only runs with this `status`: "+strings.Join(model.RunStatuses, ", "))
+	since := fs.Duration("since", 0, "only runs started within this `duration`, e.g. 24h")
+	limit := fs.Int("limit", 100, "list at most this many `runs` (0 for all)")
 	if err := parseFlags(fs, args, stdout); err != nil {
 		return err
 	}
 	if fs.NArg() > 1 {
 		return errors.New("runs accepts at most one job slug")
+	}
+	if *status != "" && !slices.Contains(model.RunStatuses, *status) {
+		return fmt.Errorf("--status must be one of %s", strings.Join(model.RunStatuses, ", "))
+	}
+	if *since < 0 || *limit < 0 {
+		return errors.New("--since and --limit must not be negative")
 	}
 	s, err := openForList(ctx, *dir)
 	if err != nil {
@@ -106,23 +117,31 @@ func runsCommand(ctx context.Context, args []string, stdout io.Writer) error {
 	for _, j := range jobs {
 		byID[j.ID] = j
 	}
-	var runs []model.Run
+	filter := storage.RunFilter{Status: *status}
+	if *since > 0 {
+		filter.Since = time.Now().Add(-*since)
+	}
 	if fs.NArg() == 1 {
 		job, err := s.GetJobBySlug(ctx, fs.Arg(0))
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("no job with slug %q", fs.Arg(0))
+		}
 		if err != nil {
 			return err
 		}
-		if runs, err = s.ListRunsForJob(ctx, job.ID, 100); err != nil {
-			return err
-		}
-	} else {
-		items, err := s.ListRunsWithJob(ctx, 100)
-		if err != nil {
-			return err
-		}
-		for _, r := range items {
-			runs = append(runs, r.Run)
-		}
+		filter.JobID = job.ID
+	}
+	rows := *limit
+	if rows == 0 {
+		rows = -1 // SQLite: no limit
+	}
+	items, err := s.ListRunsPage(ctx, filter, nil, rows)
+	if err != nil {
+		return err
+	}
+	runs := make([]model.Run, 0, len(items))
+	for _, r := range items {
+		runs = append(runs, r.Run)
 	}
 	if *asJSON {
 		out := make([]jsonRun, 0, len(runs))

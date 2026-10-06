@@ -72,6 +72,9 @@ type Usage struct {
 	SysCPUMS  int64
 }
 
+// RunStatuses are the statuses a finished or running run can have.
+var RunStatuses = []string{"success", "failed", "timeout", "running", "cancelled", "skipped"}
+
 // Failing reports whether a run status counts as a failure.
 func Failing(status string) bool { return status == "failed" || status == "timeout" }
 

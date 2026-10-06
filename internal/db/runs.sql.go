@@ -744,6 +744,90 @@ func (q *Queries) ListRunsOverlapping(ctx context.Context, arg ListRunsOverlappi
 	return items, nil
 }
 
+const listRunsPage = `-- name: ListRunsPage :many
+SELECT runs.id, runs.job_id, runs.started_at, runs.ended_at, runs.duration_ms, runs.status, runs.exit_code, runs.stdout, runs.stderr, runs.combined_log, runs.truncated, runs.created_at, runs.pid, runs.host, runs.env_hash, runs.reason, runs.overlapped_run_id, runs.max_rss_kb, runs.user_cpu_ms, runs.sys_cpu_ms, runs.failure_signature, jobs.name AS job_name
+FROM runs JOIN jobs ON jobs.id = runs.job_id
+WHERE (?1 IS NULL OR runs.job_id = ?1)
+  AND (?2 IS NULL OR runs.status = ?2)
+  AND (?3 IS NULL OR runs.started_at >= ?3)
+  AND (?4 IS NULL OR runs.started_at < ?4)
+  AND (?5 IS NULL OR runs.started_at < ?5
+       OR (runs.started_at = ?5 AND runs.id < ?6))
+ORDER BY runs.started_at DESC, runs.id DESC LIMIT ?7
+`
+
+type ListRunsPageParams struct {
+	JobID      interface{}
+	Status     interface{}
+	Since      interface{}
+	Until      interface{}
+	BeforeTime interface{}
+	BeforeID   sql.NullString
+	RowLimit   int64
+}
+
+type ListRunsPageRow struct {
+	Run     Run
+	JobName string
+}
+
+// Runs newest first, optionally of one job, with one status, or started in
+// [since, until). A page continues after the run (before_time, before_id),
+// so runs recorded meanwhile do not shift it.
+func (q *Queries) ListRunsPage(ctx context.Context, arg ListRunsPageParams) ([]ListRunsPageRow, error) {
+	rows, err := q.db.QueryContext(ctx, listRunsPage,
+		arg.JobID,
+		arg.Status,
+		arg.Since,
+		arg.Until,
+		arg.BeforeTime,
+		arg.BeforeID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRunsPageRow
+	for rows.Next() {
+		var i ListRunsPageRow
+		if err := rows.Scan(
+			&i.Run.ID,
+			&i.Run.JobID,
+			&i.Run.StartedAt,
+			&i.Run.EndedAt,
+			&i.Run.DurationMs,
+			&i.Run.Status,
+			&i.Run.ExitCode,
+			&i.Run.Stdout,
+			&i.Run.Stderr,
+			&i.Run.CombinedLog,
+			&i.Run.Truncated,
+			&i.Run.CreatedAt,
+			&i.Run.Pid,
+			&i.Run.Host,
+			&i.Run.EnvHash,
+			&i.Run.Reason,
+			&i.Run.OverlappedRunID,
+			&i.Run.MaxRssKb,
+			&i.Run.UserCpuMs,
+			&i.Run.SysCpuMs,
+			&i.Run.FailureSignature,
+			&i.JobName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRunsWithJob = `-- name: ListRunsWithJob :many
 SELECT runs.id, runs.job_id, runs.started_at, runs.ended_at, runs.duration_ms, runs.status, runs.exit_code, runs.stdout, runs.stderr, runs.combined_log, runs.truncated, runs.created_at, runs.pid, runs.host, runs.env_hash, runs.reason, runs.overlapped_run_id, runs.max_rss_kb, runs.user_cpu_ms, runs.sys_cpu_ms, runs.failure_signature, jobs.name AS job_name
 FROM runs JOIN jobs ON jobs.id = runs.job_id
@@ -892,12 +976,24 @@ SELECT runs.id, runs.job_id, runs.started_at, runs.ended_at, runs.duration_ms, r
 FROM runs JOIN jobs ON jobs.id = runs.job_id
 WHERE runs.status != 'running'
   AND instr(lower(runs.combined_log), lower(?1)) > 0
-ORDER BY runs.started_at DESC LIMIT ?2
+  AND (?2 IS NULL OR runs.job_id = ?2)
+  AND (?3 IS NULL OR runs.status = ?3)
+  AND (?4 IS NULL OR runs.started_at >= ?4)
+  AND (?5 IS NULL OR runs.started_at < ?5)
+  AND (?6 IS NULL OR runs.started_at < ?6
+       OR (runs.started_at = ?6 AND runs.id < ?7))
+ORDER BY runs.started_at DESC, runs.id DESC LIMIT ?8
 `
 
 type SearchRunLogsParams struct {
-	Query    string
-	RowLimit int64
+	Query      string
+	JobID      interface{}
+	Status     interface{}
+	Since      interface{}
+	Until      interface{}
+	BeforeTime interface{}
+	BeforeID   sql.NullString
+	RowLimit   int64
 }
 
 type SearchRunLogsRow struct {
@@ -905,8 +1001,19 @@ type SearchRunLogsRow struct {
 	JobName string
 }
 
+// Finished runs whose output contains query, ignoring ASCII case, filtered
+// like ListRunsPage and paged the same way.
 func (q *Queries) SearchRunLogs(ctx context.Context, arg SearchRunLogsParams) ([]SearchRunLogsRow, error) {
-	rows, err := q.db.QueryContext(ctx, searchRunLogs, arg.Query, arg.RowLimit)
+	rows, err := q.db.QueryContext(ctx, searchRunLogs,
+		arg.Query,
+		arg.JobID,
+		arg.Status,
+		arg.Since,
+		arg.Until,
+		arg.BeforeTime,
+		arg.BeforeID,
+		arg.RowLimit,
+	)
 	if err != nil {
 		return nil, err
 	}

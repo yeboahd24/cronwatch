@@ -359,6 +359,26 @@ code, pre { font-family: var(--mono); font-size: 13px; }
 }
 .log-search button:hover { background: rgba(52, 211, 153, 0.1); }
 
+.history-filter { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 14px; flex-basis: 100%; }
+form.history-filter { flex-basis: auto; }
+.field { display: flex; flex-direction: column; gap: 4px; color: var(--muted); font-size: 13px; }
+.field select, .field input {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+}
+.clear { align-self: flex-end; padding-bottom: 9px; color: var(--muted); font-size: 14px; }
+.clear:hover { color: var(--success); }
+
+.pager { display: flex; gap: 16px; margin-top: 14px; font-size: 14px; }
+.pager a { color: var(--muted); text-decoration: none; }
+.pager a:hover { color: var(--success); }
+.pager-older { margin-left: auto; }
+
 .log-result .log-viewer { max-height: none; }
 .more { margin: 0; padding: 10px 16px; border-top: 1px solid var(--border); font-size: 14px; }
 .more a { color: var(--muted); }

@@ -1,10 +1,16 @@
 {{define "runs.html"}}{{template "head" .}}
 <h1 class="visually-hidden">Runs</h1>
+{{with .Data}}
+<form class="log-search history-filter" method="get" action="/runs" aria-label="Filter runs">
+  {{template "history_fields" .Filter}}
+  <button type="submit">Filter</button>
+  {{if .Filter.Active}}<a class="clear" href="/runs">Clear</a>{{end}}
+</form>
 <section class="panel table-wrap">
   <table>
     <thead><tr><th scope="col">Job</th><th scope="col">Started</th><th scope="col">Status</th><th scope="col">Duration</th><th scope="col">Exit code</th></tr></thead>
     <tbody>
-    {{- range .Data}}
+    {{- range .Runs}}
     <tr>
       <td data-label="Job" class="cell-job"><a href="/jobs/{{.Run.JobID}}">{{.JobName}}</a></td>
       <td data-label="Started"><a href="/runs/{{.Run.ID}}">{{template "time" .Run.StartedAt}}</a></td>
@@ -13,9 +19,37 @@
       <td data-label="Exit code">{{if .Run.ExitCode}}{{.Run.ExitCode}}{{else}}—{{end}}</td>
     </tr>
     {{- else}}
-    <tr><td colspan="5" class="empty">No runs recorded.</td></tr>
+    <tr><td colspan="5" class="empty">{{if .Filter.Active}}No runs match.{{else if .Filter.Paged}}No older runs.{{else}}No runs recorded.{{end}}</td></tr>
     {{- end}}
     </tbody>
   </table>
 </section>
+{{template "pager" .Pager}}
+{{end}}
 {{template "foot"}}{{end}}
+
+{{define "history_fields"}}
+  <label class="field"><span>Job</span>
+    <select name="job">
+      <option value="">All jobs</option>
+      {{- range .Jobs}}
+      <option value="{{.Slug}}"{{if eq .Slug $.Job}} selected{{end}}>{{.Name}}{{if .ArchivedAt}} (archived){{end}}</option>
+      {{- end}}
+    </select>
+  </label>
+  <label class="field"><span>Status</span>
+    <select name="status">
+      <option value="">Any status</option>
+      {{- range .Statuses}}
+      <option value="{{.}}"{{if eq . $.Status}} selected{{end}}>{{status .}}</option>
+      {{- end}}
+    </select>
+  </label>
+  <label class="field"><span>From</span><input type="date" name="from" value="{{.From}}"></label>
+  <label class="field"><span>To</span><input type="date" name="to" value="{{.To}}"></label>
+{{end}}
+
+{{define "pager"}}{{if or .Older .Newest}}<nav class="pager" aria-label="Pages">
+  {{- if .Newest}}<a href="{{.Newest}}"><span aria-hidden="true">←</span> Newest</a>{{end}}
+  {{- if .Older}}<a class="pager-older" href="{{.Older}}">Older <span aria-hidden="true">→</span></a>{{end}}
+</nav>{{end}}{{end}}
