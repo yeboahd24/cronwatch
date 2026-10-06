@@ -7,11 +7,13 @@ import (
 	"encoding/pem"
 	"io"
 	"log"
+	"net"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -156,6 +158,7 @@ func TestServeChecksHubFlags(t *testing.T) {
 	}{
 		{[]string{"--hub-addr", "0.0.0.0:0"}, "needs --hub-cert and --hub-key"},
 		{[]string{"--hub-cert", "c.pem"}, "go together"},
+		{[]string{"--hub-addr", "127.0.0.1:0", "--hub-cert", "missing.pem", "--hub-key", "missing.key"}, "--hub-cert and --hub-key:"},
 		{[]string{"--report-to", "http://hub.example:8766"}, "must use https"},
 		{[]string{"--report-to", "https://hub.example:8766"}, "no hub token"},
 	} {
@@ -163,5 +166,74 @@ func TestServeChecksHubFlags(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("serve %v: %v, want %q", tc.args, err, tc.want)
 		}
+	}
+}
+
+// syncBuffer is a bytes.Buffer safe for concurrent writes and reads.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func TestServeWaitsForTheHubAddress(t *testing.T) {
+	saved := hubRetryEvery
+	hubRetryEvery = 20 * time.Millisecond
+	t.Cleanup(func() { hubRetryEvery = saved })
+	dir := t.TempDir()
+	token, err := openStore(t, dir).CreateHost(context.Background(), "web-1", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Something else holds the address at first, as when a VPN is not up yet.
+	busy, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := busy.Addr().String()
+	ctx, cancel := context.WithCancel(context.Background())
+	var stdout, stderr syncBuffer
+	served := make(chan error, 1)
+	go func() {
+		served <- Run(ctx, []string{"serve", "--data-dir", dir, "--addr", "127.0.0.1:0", "--sync-crontab=false", "--hub-addr", addr}, &stdout, &stderr)
+	}()
+	waitUntil := func(what string, ok func() bool) {
+		t.Helper()
+		for deadline := time.Now().Add(5 * time.Second); !ok(); time.Sleep(10 * time.Millisecond) {
+			if time.Now().After(deadline) {
+				t.Fatalf("%s; stdout %q, stderr %q", what, stdout.String(), stderr.String())
+			}
+		}
+	}
+	// The dashboard serves meanwhile, and the wait is logged once.
+	waitUntil("the dashboard did not start", func() bool { return strings.Contains(stdout.String(), "CronWatch UI:") })
+	waitUntil("the wait was not logged", func() bool { return strings.Contains(stderr.String(), "cannot accept reports yet") })
+	time.Sleep(100 * time.Millisecond)
+	if n := strings.Count(stderr.String(), "cannot accept reports yet"); n != 1 {
+		t.Fatalf("logged the same wait %d times", n)
+	}
+	busy.Close()
+	waitUntil("the hub did not start", func() bool { return strings.Contains(stdout.String(), "accepting reports at http://"+addr) })
+	client, err := hub.NewClient("http://"+addr, token, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Send(ctx, hub.Report{Version: hub.ReportVersion, Jobs: []hub.Job{}}); err != nil {
+		t.Fatalf("report after the wait: %v", err)
+	}
+	cancel()
+	if err := <-served; err != nil {
+		t.Fatal(err)
 	}
 }

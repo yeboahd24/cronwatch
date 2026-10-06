@@ -102,6 +102,7 @@ func TestDoctor(t *testing.T) {
 	// Once missed runs are checked and serve runs for this directory, those
 	// findings clear; an old check and an undelivered alert are warnings.
 	fakeProcesses(t, process{PID: 1, Argv: []string{"cron"}},
+		process{PID: 41, Argv: []string{"/bin/flock", "-n", "serve.lock", "/usr/local/bin/cronwatch", "serve"}, Env: []string{"CRONWATCH_DATA_DIR=" + dir}},
 		process{PID: 42, Argv: []string{"/usr/local/bin/cronwatch", "serve"}, Env: []string{"CRONWATCH_DATA_DIR=" + dir}})
 	if err := maintain(ctx, s, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)

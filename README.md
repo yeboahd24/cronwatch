@@ -947,6 +947,13 @@ cronwatch serve --hub-addr :8766 --hub-cert hub.crt --hub-key hub.key
 Behind a reverse proxy that terminates TLS, give `--hub-addr` a loopback
 address such as `127.0.0.1:8766` instead, without a certificate.
 
+On a private network such as Tailscale or WireGuard, give `--hub-addr` the
+hub's address on it, such as `100.78.211.74:8766`, so reports never cross the
+internet, and include that IP in the certificate
+(`-addext subjectAltName=IP:100.78.211.74`). If the address is not up yet when
+`serve` starts, as at boot, `serve` runs as usual and keeps trying to listen
+there every 10 seconds; a bad certificate or key stops it at once.
+
 **2. On each server**, put the token in a file only CronWatch's user can read,
 and report from `cronwatch serve`:
 

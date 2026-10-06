@@ -380,8 +380,8 @@ func doctorMonitoring(ctx context.Context, s *storage.Store, dir string, now tim
 		if slices.Contains(cronDaemons, filepath.Base(p.Argv[0])) {
 			daemon = true
 		}
-		i := slices.IndexFunc(p.Argv, crontab.IsCronwatch)
-		if i < 0 || i+1 >= len(p.Argv) || p.Argv[i+1] != "serve" || serveDataDir(p) != dir {
+		// Only cronwatch itself, not a wrapper such as flock that names it.
+		if len(p.Argv) < 2 || !crontab.IsCronwatch(p.Argv[0]) || p.Argv[1] != "serve" || serveDataDir(p) != dir {
 			continue
 		}
 		serves = append(serves, p.PID)
