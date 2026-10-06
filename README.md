@@ -176,7 +176,7 @@ database. A user-level systemd service example is in
 | [`cronwatch serve`](#cronwatch-serve) | Serve the local dashboard |
 | [`cronwatch jobs`](#cronwatch-jobs) | List jobs and their current status |
 | [`cronwatch runs`](#cronwatch-runs) | List recent runs |
-| [`cronwatch sync`](#cronwatch-sync) | Register jobs from your crontab before they run |
+| [`cronwatch sync`](#cronwatch-sync) | Register jobs from your crontab, and wrap unmonitored lines |
 | [`cronwatch envdiff`](#cronwatch-envdiff) | Compare a run's environment with your shell |
 | [`cronwatch try`](#cronwatch-try) | Rerun a job in the environment cron gave it |
 | [`cronwatch digest`](#cronwatch-digest) | Summarize every job, for a daily email |
@@ -459,6 +459,8 @@ Open a run's output on the dashboard at `/runs/RUN-ID`.
 
 ```sh
 cronwatch sync [--crontab FILE]
+cronwatch sync [--crontab FILE] --wrap [--lines N,...] [--cronwatch PATH] [--apply]
+cronwatch sync [--crontab FILE] --backups | --restore latest|NAME
 ```
 
 Registers the jobs in your crontab (`crontab -l`, or `FILE`) so they appear on
@@ -478,6 +480,66 @@ When everything is covered it prints
 `8 jobs in the crontab, all registered. Every crontab line is monitored.`
 `cronwatch serve` runs the same sync every minute, so you rarely need this by
 hand. See [crontab sync](#crontab-sync).
+
+#### Wrapping existing jobs
+
+You do not have to edit every line by hand. `--wrap` shows how the lines that
+do not use cronwatch would look wrapped with `cronwatch run`, as a diff, and
+changes nothing:
+
+```console
+$ cronwatch sync --wrap
+Would wrap 2 lines with cronwatch run:
+
+  line 3: backup
+  line 5: report
+
+--- crontab
++++ crontab (wrapped)
+@@ -2,4 +2,4 @@
+ # nightly
+-0 2 * * * /usr/local/bin/backup.sh >> /var/log/backup.log 2>&1
++0 2 * * * cronwatch run --name backup -- /usr/local/bin/backup.sh >> /var/log/backup.log 2>&1
+ */5 * * * * cronwatch run --name "Ingest queue" -- bash ingest.sh
+-30 4 * * 0 cd /srv/app && ./report.py >> /var/log/report.log
++30 4 * * 0 cronwatch run --name report -- sh -c 'cd /srv/app && ./report.py' >> /var/log/report.log
+
+To make this change, run the same command with --apply. The crontab is backed up first.
+```
+
+Add `--apply` to make the change. CronWatch first saves an exact copy of the
+current crontab in the data directory, then installs the new one with
+`crontab -` (or writes `FILE`) and registers the new jobs. It prints the
+command that undoes it. `--lines 3,5` wraps only those lines.
+
+How a line is wrapped:
+
+- A single command gets `cronwatch run --name NAME --` in front. Its
+  redirections now apply to cronwatch, which passes the output through, so
+  the log file still gets it and CronWatch records it.
+- Anything else runs with `sh -c '…'`. When only setup commands such as
+  `cd /srv/app &&` come before the main one, its redirections move outside
+  `sh -c` so CronWatch records its output too. Otherwise the line is kept
+  whole, so its output goes where it did before, which may leave CronWatch
+  little to record.
+- A line that uses `%` to pass input to its command is left alone, because
+  cron splits the line at `%` even inside quotes. Wrap it by hand.
+- The name is the program or script the line runs, such as `backup` for
+  `backup.sh`, skipping `cd`, `nice`, `env` and interpreters such as
+  `python3`. A name already used by a line or an existing job gets a number.
+  Edit the names in the crontab afterwards if you like; a new name starts a
+  new job.
+- Wrapped lines call cronwatch as the crontab's other cronwatch lines do (such
+  as `$CW`), else as `cronwatch` if it is on the crontab's `PATH`, else by its
+  full path. `--cronwatch PATH` overrides this.
+
+`--backups` lists the backups of the crontab, oldest first, and
+`--restore latest` (or a name from the list) puts one back, after backing up
+the crontab it replaces. Each crontab has its own backups, so a backup of a
+`--crontab FILE` is never restored as your crontab. Backups are exact copies
+and may hold secrets; they are readable only by you. Restoring does not delete
+the jobs that wrapping registered; they stay on the dashboard, and if they
+have a schedule they are reported as missed.
 
 ### `cronwatch envdiff`
 
@@ -736,7 +798,9 @@ Hooks come from the line's flags, or else from `CRONWATCH_ON_FAILURE` and
 `CRONWATCH_ON_RECOVER` in the crontab; removing those removes the hooks.
 
 Run `cronwatch sync` to do the same by hand. It also lists crontab lines that
-are not wrapped with `cronwatch run`, so you can see what is not monitored.
+are not wrapped with `cronwatch run`, so you can see what is not monitored,
+and `cronwatch sync --wrap` offers to wrap them
+([wrapping existing jobs](#wrapping-existing-jobs)).
 Pass `--sync-crontab=false` to `serve` to turn this off, along with
 [crontab history](#cronwatch-crontab-history).
 

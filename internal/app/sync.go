@@ -156,42 +156,120 @@ func syncCrontab(ctx context.Context, s *storage.Store, text string) (syncResult
 }
 
 func syncCommand(ctx context.Context, args []string, stdout io.Writer) error {
-	fs := newFlagSet("sync", "cronwatch sync [--crontab FILE]",
-		"Register the jobs your crontab runs through \"cronwatch run\", and list lines that are not monitored.")
+	fs := newFlagSet("sync", "cronwatch sync [--crontab FILE] [--wrap [--lines N,...] [--apply]] [--backups] [--restore NAME]",
+		"Register the jobs your crontab runs through \"cronwatch run\", and list lines that are not monitored.\n"+
+			"--wrap shows how to wrap those lines with \"cronwatch run\"; --apply makes the change, after backing\n"+
+			"up the crontab. --restore puts a backup back.")
 	dir := fs.String("data-dir", "", "data directory")
 	file := fs.String("crontab", "", "read this crontab `file` instead of \"crontab -l\" (- for stdin)")
 	asJSON := fs.Bool("json", false, "print the result as JSON")
+	wrap := fs.Bool("wrap", false, "show a diff wrapping unmonitored lines with cronwatch run")
+	lines := fs.String("lines", "", "with --wrap, only these comma-separated line `numbers`")
+	apply := fs.Bool("apply", false, "with --wrap, back up the crontab and install the wrapped one")
+	cronwatch := fs.String("cronwatch", "", "with --wrap, the `command` wrapped lines call cronwatch by (default: as other lines do, else found from PATH)")
+	backups := fs.Bool("backups", false, "list crontab backups")
+	restore := fs.String("restore", "", "back up the crontab, then replace it with the backup `name` (or latest)")
 	if err := parseFlags(fs, args, stdout); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
 		return errors.New("sync takes no arguments")
 	}
-	var text string
-	switch *file {
-	case "":
-		var err error
-		if text, err = readUserCrontab(ctx); err != nil {
-			return err
-		}
-	case "-":
-		b, err := io.ReadAll(os.Stdin)
-		if err != nil {
-			return err
-		}
-		text = string(b)
-	default:
-		b, err := os.ReadFile(*file)
-		if err != nil {
-			return err
-		}
-		text = string(b)
+	lineNumbers, err := parseLines(*lines)
+	if err != nil {
+		return err
 	}
+	modes := 0
+	for _, on := range []bool{*wrap, *backups, *restore != ""} {
+		if on {
+			modes++
+		}
+	}
+	switch {
+	case modes > 1:
+		return errors.New("use only one of --wrap, --backups and --restore")
+	case !*wrap && (*apply || *lines != "" || *cronwatch != ""):
+		return errors.New("--apply, --lines and --cronwatch need --wrap")
+	case *asJSON && modes > 0:
+		return errors.New("--json only applies to a plain sync")
+	}
+	target := crontabTarget{file: *file}
+
 	s, err := openForList(ctx, *dir)
 	if err != nil {
 		return err
 	}
 	defer s.Close()
+	backupDir, err := target.backupDir(s.DataDir)
+	if err != nil {
+		return err
+	}
+	// undo is the command that restores a backup of this crontab.
+	undo := "cronwatch sync"
+	if *dir != "" {
+		undo += " --data-dir " + crontab.Quote(*dir)
+	}
+	if *file != "" {
+		undo += " --crontab " + crontab.Quote(*file)
+	}
+	undo += " --restore "
+	if *backups {
+		names, err := listBackups(backupDir)
+		if err != nil {
+			return err
+		}
+		if len(names) == 0 {
+			fmt.Fprintf(stdout, "No backups of the %s.\n", target.name())
+		}
+		for _, name := range names {
+			fmt.Fprintln(stdout, name)
+		}
+		return nil
+	}
+
+	text, err := target.read(ctx)
+	if err != nil {
+		return err
+	}
+	if *restore != "" {
+		name, saved, err := readBackup(backupDir, *restore)
+		if err != nil {
+			return err
+		}
+		if saved == text {
+			fmt.Fprintf(stdout, "The %s already matches backup %s.\n", target.name(), name)
+			return nil
+		}
+		backup, result, err := replaceCrontab(ctx, s, target, text, saved)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "Restored the %s from backup %s. The one it replaced is backup %s; undo with:\n  %s%s\n\n", target.name(), name, backup, undo, backup)
+		printSyncResult(stdout, result)
+		return nil
+	}
+	if *wrap {
+		p, err := proposeWrap(ctx, s, text, lineNumbers, *cronwatch)
+		if err != nil {
+			return err
+		}
+		if !*apply || len(p.Wrapped) == 0 {
+			printWrap(stdout, p, target, false)
+			if len(p.Wrapped) > 0 {
+				fmt.Fprintf(stdout, "\nTo make this change, run the same command with --apply. The %s is backed up first.\n", target.name())
+			}
+			return nil
+		}
+		backup, result, err := replaceCrontab(ctx, s, target, text, p.After)
+		if err != nil {
+			return err
+		}
+		printWrap(stdout, p, target, true)
+		fmt.Fprintf(stdout, "\nThe previous %s is backup %s; undo with:\n  %s%s\n\n", target.name(), backup, undo, backup)
+		printSyncResult(stdout, result)
+		return nil
+	}
+
 	result, err := syncCrontab(ctx, s, text)
 	if err != nil {
 		return err
@@ -206,6 +284,9 @@ func syncCommand(ctx context.Context, args []string, stdout io.Writer) error {
 		return writeJSON(stdout, newJSONSync(result))
 	}
 	printSyncResult(stdout, result)
+	if len(result.Unmonitored) > 0 {
+		fmt.Fprintln(stdout, "\nTo wrap them with cronwatch run, see: cronwatch sync --wrap")
+	}
 	return nil
 }
 
