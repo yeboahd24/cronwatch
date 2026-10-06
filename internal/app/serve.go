@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -95,28 +96,18 @@ func serveCommand(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	done := make(chan struct{})
 	var hubServer *http.Server
 	if *hubAddr != "" {
-		hubListener, err := net.Listen("tcp", *hubAddr)
-		if err != nil {
-			return fmt.Errorf("--hub-addr: %w", err)
-		}
 		hubServer = &http.Server{Handler: hub.Handler(s, time.Now, log.New(stderr, "", 0)), ReadHeaderTimeout: 5 * time.Second,
 			ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second}
-		scheme := "https"
-		if *hubCert == "" {
-			scheme = "http"
+		// A bad certificate is a mistake to fix now; an address that is not
+		// up yet, such as a VPN's at boot, is waited for.
+		if *hubCert != "" {
+			cert, err := tls.LoadX509KeyPair(*hubCert, *hubKey)
+			if err != nil {
+				return fmt.Errorf("--hub-cert and --hub-key: %w", err)
+			}
+			hubServer.TLSConfig = &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
 		}
-		fmt.Fprintf(stdout, "CronWatch hub: accepting reports at %s://%s%s\n", scheme, hubListener.Addr(), hub.ReportPath)
-		go func() {
-			var err error
-			if *hubCert != "" {
-				err = hubServer.ServeTLS(hubListener, *hubCert, *hubKey)
-			} else {
-				err = hubServer.Serve(hubListener)
-			}
-			if err != nil && !errors.Is(err, http.ErrServerClosed) {
-				fmt.Fprintln(stderr, "hub:", err)
-			}
-		}()
+		go serveHub(ctx, done, hubServer, *hubAddr, stdout, stderr)
 	}
 	go maintenanceLoop(ctx, done, s, *syncTab, report, stderr)
 	go func() {
@@ -142,6 +133,43 @@ func serveCommand(ctx context.Context, args []string, stdout, stderr io.Writer) 
 // maintenanceLoop periodically registers crontab jobs, closes out runs whose
 // cronwatch process died and records missed occurrences, so the dashboard is
 // current even when nobody is looking at it.
+// hubRetryEvery is how often serve retries a hub address it cannot listen
+// on yet. Tests shorten it.
+var hubRetryEvery = 10 * time.Second
+
+// serveHub accepts reports on addr until done, retrying until it can listen
+// there, so the rest of serve runs while, for example, a VPN address that
+// --hub-addr names is still coming up at boot.
+func serveHub(ctx context.Context, done <-chan struct{}, server *http.Server, addr string, stdout, stderr io.Writer) {
+	failed := ""
+	for {
+		listener, err := net.Listen("tcp", addr)
+		if err == nil {
+			scheme := "http"
+			if server.TLSConfig != nil {
+				scheme = "https"
+				listener = tls.NewListener(listener, server.TLSConfig)
+			}
+			fmt.Fprintf(stdout, "CronWatch hub: accepting reports at %s://%s%s\n", scheme, listener.Addr(), hub.ReportPath)
+			if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				fmt.Fprintln(stderr, "hub:", err)
+			}
+			return
+		}
+		if err.Error() != failed {
+			failed = err.Error()
+			fmt.Fprintf(stderr, "hub: cannot accept reports yet: %v (retrying every %s)\n", err, shortDuration(hubRetryEvery))
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-done:
+			return
+		case <-time.After(hubRetryEvery):
+		}
+	}
+}
+
 func maintenanceLoop(ctx context.Context, done <-chan struct{}, s *storage.Store, syncTab bool, report *reporter, stderr io.Writer) {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
