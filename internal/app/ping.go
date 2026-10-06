@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/yeboahd24/cronwatch/internal/config"
-	"github.com/yeboahd24/cronwatch/internal/runenv"
 	"github.com/yeboahd24/cronwatch/internal/schedule"
 	"github.com/yeboahd24/cronwatch/internal/storage"
 )
@@ -98,9 +97,10 @@ func pingCommand(ctx context.Context, args []string, stdout, stderr io.Writer) e
 	}
 
 	now := time.Now().UTC()
+	runs := lifecycle{s: s, stderr: stderr}
 	// A run past its --max-duration has timed out, whether or not another
 	// process noticed before this ping did.
-	expireHeartbeats(ctx, s, job.ID, now, stderr)
+	runs.expireHeartbeats(ctx, job.ID, now)
 	open, err := s.OpenHeartbeatRun(ctx, job.ID)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
@@ -110,28 +110,19 @@ func pingCommand(ctx context.Context, args []string, stdout, stderr io.Writer) e
 		// The previous run never got its end ping.
 		note := "cronwatch: no end ping before the next start ping\n"
 		code := 1
-		if err := s.CompleteRun(ctx, open.ID, storage.Completion{Ended: now, Duration: now.Sub(open.StartedAt), Status: "failed",
+		if _, err := runs.finish(ctx, job, open.ID, storage.Completion{Ended: now, Duration: now.Sub(open.StartedAt), Status: "failed",
 			ExitCode: &code, Stderr: note, Combined: "\x02" + note, Reason: "no end ping before the next --start"}); err != nil {
 			return err
 		}
-		if finished, err := s.GetRun(ctx, open.ID); err == nil {
-			notifyRun(ctx, s, job, finished, stderr)
-		}
 	}
 	if *start {
-		run, err := s.CreateHeartbeatRun(ctx, job.ID, now)
-		if err != nil {
-			return err
-		}
-		return s.SetRunEnv(ctx, run.ID, runenv.Capture())
+		_, err := runs.start(ctx, job, now, true)
+		return err
 	}
 
 	run := open
 	if run.ID == "" {
-		if run, err = s.CreateHeartbeatRun(ctx, job.ID, now); err != nil {
-			return err
-		}
-		if err := s.SetRunEnv(ctx, run.ID, runenv.Capture()); err != nil {
+		if run, err = runs.start(ctx, job, now, true); err != nil {
 			return err
 		}
 	}
@@ -151,29 +142,8 @@ func pingCommand(ctx context.Context, args []string, stdout, stderr io.Writer) e
 			c.Stdout, c.Combined = msg+"\n", msg+"\n"
 		}
 	}
-	if err := s.CompleteRun(ctx, run.ID, c); err != nil {
+	if _, err := runs.finish(ctx, job, run.ID, c); err != nil {
 		return fmt.Errorf("record ping: %w", err)
 	}
-	if finished, err := s.GetRun(ctx, run.ID); err == nil {
-		notifyRun(ctx, s, job, finished, stderr)
-	}
 	return nil
-}
-
-// expireHeartbeats records as timed out the heartbeat runs of the job with
-// jobID, or of every job if jobID is "", that have gone longer than the job's
-// --max-duration without an end ping, and queues their alerts.
-func expireHeartbeats(ctx context.Context, s *storage.Store, jobID string, now time.Time, stderr io.Writer) {
-	expired, err := s.ExpireHeartbeatRuns(ctx, jobID, now)
-	if err != nil {
-		fmt.Fprintf(stderr, "cronwatch: warning: could not time out heartbeat runs: %v\n", err)
-	}
-	for _, run := range expired {
-		job, err := s.GetJob(ctx, run.JobID)
-		if err != nil {
-			fmt.Fprintf(stderr, "cronwatch: warning: could not read a timed-out run's job: %v\n", err)
-			continue
-		}
-		notifyRun(ctx, s, job, run, stderr)
-	}
 }

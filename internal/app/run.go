@@ -14,7 +14,6 @@ import (
 	"unicode"
 
 	"github.com/yeboahd24/cronwatch/internal/config"
-	"github.com/yeboahd24/cronwatch/internal/runenv"
 	"github.com/yeboahd24/cronwatch/internal/runner"
 	"github.com/yeboahd24/cronwatch/internal/schedule"
 	"github.com/yeboahd24/cronwatch/internal/storage"
@@ -281,8 +280,8 @@ func runCommand(ctx context.Context, args []string, stdout, stderr io.Writer) er
 	if err != nil {
 		return runUnrecorded(ctx, opts, lock, locked, err, stdout, stderr)
 	}
-	started := time.Now().UTC()
-	run, err := s.CreateRun(ctx, job.ID, started)
+	runs := lifecycle{s: s, stderr: stderr}
+	run, err := runs.start(ctx, job, time.Now().UTC(), false)
 	if err != nil {
 		return runUnrecorded(ctx, opts, lock, locked, err, stdout, stderr)
 	}
@@ -292,22 +291,18 @@ func runCommand(ctx context.Context, args []string, stdout, stderr io.Writer) er
 			previous = prev.ID
 		}
 		if opts.NoOverlap {
-			return skipRun(ctx, s, run, previous, stderr)
+			return skipRun(ctx, runs, job, run, previous)
 		}
 		if err := s.SetRunOverlap(ctx, run.ID, previous); err != nil {
 			fmt.Fprintf(stderr, "cronwatch: warning: could not record the overlap: %v\n", err)
 		}
-	}
-	// The environment explains failures but is not needed to run the job.
-	if err := s.SetRunEnv(ctx, run.ID, runenv.Capture()); err != nil {
-		fmt.Fprintf(stderr, "cronwatch: warning: could not record the environment: %v\n", err)
 	}
 	result, status, reason, runErr := execute(ctx, opts, saveOutput(s, run.ID, stderr), stdout, stderr)
 	code := result.ExitCode
 	// A cancelled context cannot be used to save the final state.
 	finishCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := s.CompleteRun(finishCtx, run.ID, storage.Completion{Ended: time.Now().UTC(), Duration: result.Duration,
+	if _, err := runs.finish(finishCtx, job, run.ID, storage.Completion{Ended: time.Now().UTC(), Duration: result.Duration,
 		Status: status, ExitCode: &code, Stdout: result.Stdout, Stderr: result.Stderr, Combined: result.Combined,
 		Truncated: result.Truncated, Reason: reason, Usage: result.Usage}); err != nil {
 		if opts.OnStorageError != "run" {
@@ -315,8 +310,6 @@ func runCommand(ctx context.Context, args []string, stdout, stderr io.Writer) er
 		}
 		// The command has run; keep its exit code rather than report ours.
 		fmt.Fprintf(stderr, "cronwatch: warning: could not record the run's result (--on-storage-error run): %v\n", err)
-	} else if finished, err := s.GetRun(finishCtx, run.ID); err == nil {
-		notifyRun(finishCtx, s, job, finished, stderr)
 	}
 	return finalExit(status, code, runErr, opts.StrictExit)
 }

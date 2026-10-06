@@ -4,10 +4,10 @@ import (
 	"context"
 	"os"
 	"os/exec"
-	"strings"
 	"testing"
 	"time"
 
+	"github.com/yeboahd24/cronwatch/internal/runner"
 	"github.com/yeboahd24/cronwatch/internal/schedule"
 )
 
@@ -77,7 +77,7 @@ func TestUpsertKeepsUnsetFields(t *testing.T) {
 	}
 }
 
-func TestReapAbandonedRuns(t *testing.T) {
+func TestAbandonedRuns(t *testing.T) {
 	ctx := context.Background()
 	s := openTest(t)
 	job, err := s.UpsertJob(ctx, testSpec("reap", "", 0))
@@ -100,22 +100,16 @@ func TestReapAbandonedRuns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	n, err := s.ReapAbandonedRuns(ctx)
+	if err := s.SaveRunOutput(ctx, abandoned.ID, runner.Output{Stdout: "so far\n", Combined: "so far\n"}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	// Only the run whose owner has gone is abandoned; its output is loaded.
+	runs, err := s.AbandonedRuns(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != 1 {
-		t.Fatalf("reaped %d runs", n)
-	}
-	got, err := s.GetRun(ctx, abandoned.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Status != "failed" || got.EndedAt == nil || !strings.Contains(got.CombinedLog, "abandoned") {
-		t.Fatalf("abandoned run = %+v", got)
-	}
-	if got, _ := s.GetRun(ctx, live.ID); got.Status != "running" {
-		t.Fatalf("live run status = %s (pid %d)", got.Status, os.Getpid())
+	if len(runs) != 1 || runs[0].ID != abandoned.ID || runs[0].PID != int64(dead.Process.Pid) || runs[0].Stdout != "so far\n" {
+		t.Fatalf("abandoned = %+v; the live run %s belongs to pid %d", runs, live.ID, os.Getpid())
 	}
 }
 

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -39,15 +38,15 @@ func lockJob(dataDir, slug string) (f *os.File, locked bool, err error) {
 
 // skipRun records run as skipped because the job's previous run is still
 // running. It exits 0: skipping is what --no-overlap asked for.
-func skipRun(ctx context.Context, s *storage.Store, run model.Run, previous string, stderr io.Writer) error {
+func skipRun(ctx context.Context, runs lifecycle, job model.Job, run model.Run, previous string) error {
 	reason := "another run of this job was still running (--no-overlap)"
 	if previous != "" {
 		reason = fmt.Sprintf("run %s was still running (--no-overlap)", previous)
 	}
-	fmt.Fprintf(stderr, "cronwatch: skipped: %s\n", reason)
-	err := s.CompleteRun(ctx, run.ID, storage.Completion{Ended: time.Now().UTC(), Status: "skipped", Reason: reason})
+	fmt.Fprintf(runs.stderr, "cronwatch: skipped: %s\n", reason)
+	_, err := runs.finish(ctx, job, run.ID, storage.Completion{Ended: time.Now().UTC(), Status: "skipped", Reason: reason})
 	if err == nil && previous != "" {
-		err = s.SetRunOverlap(ctx, run.ID, previous)
+		err = runs.s.SetRunOverlap(ctx, run.ID, previous)
 	}
 	return err
 }

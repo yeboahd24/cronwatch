@@ -66,6 +66,8 @@ type Run struct {
 	// OutputAt is when the output saved while the run was running last
 	// changed; nil if none was saved.
 	OutputAt *time.Time
+	// PID is the cronwatch process that ran the run; 0 for heartbeat runs.
+	PID int64
 }
 
 // Usage is the resources a run's command used.
