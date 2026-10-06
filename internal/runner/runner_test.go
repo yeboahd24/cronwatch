@@ -3,8 +3,10 @@ package runner
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -15,7 +17,7 @@ import (
 )
 
 func TestCaptureTruncatesWithoutStoppingChild(t *testing.T) {
-	result, err := Execute(context.Background(), []string{"sh", "-c", "printf 123456789; printf abcdefghi >&2"}, nil, nil, 4)
+	result, err := Execute(context.Background(), []string{"sh", "-c", "printf 123456789; printf abcdefghi >&2"}, nil, nil, 4, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +67,7 @@ func TestBoundedBuffer(t *testing.T) {
 }
 
 func TestStartFailureIsRecorded(t *testing.T) {
-	result, err := Execute(context.Background(), []string{"cronwatch-no-such-command"}, nil, nil, 1024)
+	result, err := Execute(context.Background(), []string{"cronwatch-no-such-command"}, nil, nil, 1024, nil)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -78,7 +80,7 @@ func TestStartFailureIsRecorded(t *testing.T) {
 }
 
 func TestSignalExitCode(t *testing.T) {
-	result, _ := Execute(context.Background(), []string{"sh", "-c", "kill -KILL $$"}, nil, nil, 1024)
+	result, _ := Execute(context.Background(), []string{"sh", "-c", "kill -KILL $$"}, nil, nil, 1024, nil)
 	if result.ExitCode != 128+9 {
 		t.Fatalf("exit code = %d", result.ExitCode)
 	}
@@ -91,7 +93,7 @@ func TestCancelStopsGrandchildren(t *testing.T) {
 	started := time.Now()
 	// The grandchild sleep holds the output pipe open; without process-group
 	// termination Execute would wait for WaitDelay or the full sleep.
-	result, _ := Execute(ctx, []string{"sh", "-c", "sleep 30; :"}, nil, nil, 1024)
+	result, _ := Execute(ctx, []string{"sh", "-c", "sleep 30; :"}, nil, nil, 1024, nil)
 	if result.Status != "cancelled" {
 		t.Fatalf("status = %s", result.Status)
 	}
@@ -103,28 +105,28 @@ func TestCancelStopsGrandchildren(t *testing.T) {
 func TestDeadlineIsTimeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
-	result, err := Execute(ctx, []string{"sh", "-c", "sleep 30; :"}, nil, nil, 1024)
+	result, err := Execute(ctx, []string{"sh", "-c", "sleep 30; :"}, nil, nil, 1024, nil)
 	if err == nil || result.Status != "timeout" || result.ExitCode != 128+15 {
 		t.Fatalf("result = %+v, err = %v", result, err)
 	}
 }
 
 func TestUsageIsRecorded(t *testing.T) {
-	result, err := Execute(context.Background(), []string{"sh", "-c", "true"}, nil, nil, 1024)
+	result, err := Execute(context.Background(), []string{"sh", "-c", "true"}, nil, nil, 1024, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result.Usage == nil || result.Usage.MaxRSSKB <= 0 {
 		t.Fatalf("usage = %+v", result.Usage)
 	}
-	missing, _ := Execute(context.Background(), []string{"cronwatch-no-such-command"}, nil, nil, 1024)
+	missing, _ := Execute(context.Background(), []string{"cronwatch-no-such-command"}, nil, nil, 1024, nil)
 	if missing.Usage != nil {
 		t.Fatalf("a command that never started has usage %+v", missing.Usage)
 	}
 }
 
 func TestCombinedLogTagsStderrLines(t *testing.T) {
-	result, err := Execute(context.Background(), []string{"sh", "-c", "echo out1; echo err1 >&2; printf 'tail-no-newline'"}, nil, nil, 1024)
+	result, err := Execute(context.Background(), []string{"sh", "-c", "echo out1; echo err1 >&2; printf 'tail-no-newline'"}, nil, nil, 1024, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,6 +140,21 @@ func TestCombinedLogTagsStderrLines(t *testing.T) {
 	}
 	if result.Stdout != "out1\ntail-no-newline" || result.Stderr != "err1\n" {
 		t.Fatalf("streams = %q / %q", result.Stdout, result.Stderr)
+	}
+}
+
+func TestLinesAreSeenBeforeTruncation(t *testing.T) {
+	var got []string
+	onLine := func(line []byte, stderr bool) {
+		got = append(got, fmt.Sprintf("%v:%s", stderr, line))
+	}
+	// Nothing is kept with a zero limit, but every line is still seen.
+	script := "echo a; echo b >&2; printf c"
+	if _, err := Execute(context.Background(), []string{"sh", "-c", script}, nil, nil, 0, onLine); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"false:a", "true:b", "false:c"}; !slices.Equal(got, want) {
+		t.Fatalf("lines = %q, want %q", got, want)
 	}
 }
 
@@ -159,7 +176,7 @@ func TestTimeoutKillsGrandchildrenThatIgnoreSIGTERM(t *testing.T) {
 	pidFile := filepath.Join(t.TempDir(), "pid")
 	// A background grandchild that ignores SIGTERM and records its PID.
 	script := "(trap '' TERM; exec sh -c 'echo $$ > " + pidFile + "; exec sleep 30') >/dev/null 2>&1 & wait"
-	if _, err := Execute(ctx, []string{"sh", "-c", script}, nil, nil, 1024); err == nil {
+	if _, err := Execute(ctx, []string{"sh", "-c", script}, nil, nil, 1024, nil); err == nil {
 		t.Fatal("expected an error")
 	}
 	data, err := os.ReadFile(pidFile)

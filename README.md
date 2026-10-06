@@ -226,6 +226,7 @@ Backup written to /backups/db.sql.gz
 | `--no-overlap` | Skip the run, and record it as `skipped`, if the job's previous run is still running. |
 | `--on-failure 'CMD'` | Shell command to run when the job starts failing. See [Notifications](#notifications). |
 | `--on-recover 'CMD'` | Shell command to run when the job succeeds again after failing. |
+| `--on-storage-error fail\|run` | What to do when the run cannot be recorded. See [When recording fails](#when-recording-fails). |
 
 `--schedule` and `--grace` only change the stored job when you pass them, so
 running a job by hand to test it does not reset its schedule.
@@ -249,9 +250,16 @@ Each run also records its peak memory and CPU time.
 
 Many scripts exit 0 when they fail. `--ok-codes`, `--fail-on-stderr`,
 `--fail-if-match` and `--success-if-match` let the output decide instead.
-Patterns are matched against stdout and stderr as captured, so with a small
-`--max-log-bytes` a match in the dropped middle is missed. When a rule marks a
-run failed, CronWatch prints why on stderr, and the run page shows it:
+These rules see all of the output as the command writes it, before
+`--max-log-bytes` drops anything, so an `ERROR` in the dropped middle of a long
+log still fails the run. Patterns are Go regular expressions
+([RE2 syntax](https://github.com/google/re2/wiki/Syntax)) matched against one
+line of stdout or stderr at a time, without the newline or a trailing `\r`:
+`^` and `$` anchor to the line, and a pattern never matches across lines. A
+line longer than 64 KiB is matched in 64 KiB pieces. `--fail-if-match` fails
+the run if any line matches; `--success-if-match` needs at least one line to
+match. When a rule marks a run failed, CronWatch prints why on stderr, and the
+run page shows it:
 
 ```console
 $ cronwatch run --name "Database Backup" --fail-if-match 'ERROR' -- ./backup.sh
@@ -270,6 +278,34 @@ CronWatch notices overlapping runs even without `--no-overlap`: a run that
 starts while the job's previous run is still going is marked on its page and
 outlined on the timeline.
 
+#### When recording fails
+
+Before starting the command, `cronwatch run` takes the job's lock, opens the
+database, registers the job and records the run's start. If any of that fails
+(an unreadable config, a full disk, a broken database), `--on-storage-error`
+decides what happens:
+
+- `fail` (the default): the command does not run. CronWatch prints the error
+  and exits 1, so cron mails you about it.
+- `run`: CronWatch prints a warning and runs the command anyway. Its output
+  passes through, `--timeout` and the success rules apply, and it exits as it
+  would have, but nothing is recorded and no hooks run, because whether the job
+  changed state cannot be known.
+
+`--no-overlap` is kept even when the run is not recorded. The lock is a file in
+the data directory, taken before the database is opened. If another run holds
+it, the run is skipped and CronWatch exits 0, as usual. If the lock itself
+cannot be taken, CronWatch cannot tell whether another run is going, so the
+command does not run and CronWatch exits 1.
+
+If the command runs but its result cannot be saved, `fail` reports the error and
+exits 1; `run` prints a warning and exits with the command's own code. The
+unfinished run is marked failed later, once CronWatch sees its process has
+gone.
+
+Set `CRONWATCH_ON_STORAGE_ERROR=run` at the top of a crontab to apply it to
+every job; a flag on a line takes precedence.
+
 #### Notifications
 
 `--on-failure` runs a shell command when a job goes from OK to failing: a
@@ -281,7 +317,7 @@ command gets the details in environment variables:
 | --- | --- |
 | `CRONWATCH_EVENT` | `failed`, `timeout`, `missed` or `recovered` |
 | `CRONWATCH_JOB_NAME`, `CRONWATCH_JOB_SLUG` | The job |
-| `CRONWATCH_STATUS`, `CRONWATCH_EXIT_CODE` | The run's status and exit code |
+| `CRONWATCH_STATUS`, `CRONWATCH_EXIT_CODE` | The run's status and exit code. The exit code is unset when there is none: a missed run, or a pinged run that timed out waiting for its end ping |
 | `CRONWATCH_REASON` | Why a rule marked the run failed, if one did |
 | `CRONWATCH_LAST_ERROR` | The last line the command wrote to stderr |
 | `CRONWATCH_RUN_ID`, `CRONWATCH_STARTED_AT` | The run, for `/runs/RUN-ID` on the dashboard |
@@ -299,10 +335,26 @@ any `%` as `\%`, because cron treats `%` in a command as a newline.
 CRONWATCH_ON_FAILURE=curl -fsS -d "$CRONWATCH_JOB_NAME $CRONWATCH_EVENT: $CRONWATCH_LAST_ERROR" https://ntfy.sh/my-cron-alerts
 ```
 
-Hooks run after the result is recorded, with a 30-second limit. A hook that
-fails or times out is reported on stderr and never changes the job's result.
-Missed runs are detected by `cronwatch serve` (or `jobs`, `runs`, `prune`), so
-their alerts need one of those running.
+Hooks run after the result is recorded, with a 30-second limit, and the last
+4 KiB of their output is kept. A hook that fails or times out never changes the
+job's result. CronWatch prints the error on stderr, stores the alert, and
+retries it: after 1 minute, then 2, 4 and so on up to an hour apart, for 12
+attempts in all (about seven hours). A retry runs the job's current hook, so
+fixing a broken hook command also fixes its waiting alerts. A job's alerts are
+delivered in order: one waiting for a retry holds back the job's later
+alerts. Retries happen on the job's next `cronwatch run` or `ping`, every
+minute while `cronwatch serve` is running, and whenever `jobs`, `runs` or
+`prune` checks for missed runs. Each attempt also gets
+`CRONWATCH_ALERT_ID`, which stays the same across retries, and
+`CRONWATCH_ATTEMPT`, which counts from 1, so a hook can ignore an alert it has
+already sent.
+
+The job page lists the job's alerts, with each one's delivery status and last
+error, and the run page shows the alert the run raised. The jobs list flags
+jobs with alerts that failed and have not been delivered.
+
+Missed runs are detected by `cronwatch serve` (or `check`, `jobs`, `runs`,
+`prune`), so their alerts need one of those running.
 
 ### `cronwatch serve`
 
@@ -315,7 +367,8 @@ login, so it only listens on loopback; reach it from another machine with
 `ssh -L 8765:localhost:8765 user@server`. Binding to another address requires
 `--public`. While running, it also registers jobs from your crontab
 ([crontab sync](#crontab-sync)) and checks for missed runs every minute,
-running `--on-failure` hooks for jobs that start missing runs.
+running `--on-failure` hooks for jobs that start missing runs and retrying
+alerts that could not be delivered.
 
 ```console
 $ cronwatch serve
@@ -554,7 +607,7 @@ it, and `prune --older-than` deletes old copies but always keeps the newest.
 ### `cronwatch ping`
 
 ```sh
-cronwatch ping [--start | --fail] [--message TEXT] [--exit-code N] JOB-SLUG
+cronwatch ping [--start | --fail] [--message TEXT] [--exit-code N] [--max-duration DURATION] JOB-SLUG
 ```
 
 Records a run of a job that cannot be wrapped with `cronwatch run`, such as a
@@ -571,9 +624,25 @@ cronwatch ping --start nightly-etl
 
 The job is created on its first ping; pass `--name`, `--schedule` and
 `--grace` to name it and to have missed pings detected. Hooks, failure types
-and the dashboard treat pinged runs like wrapped ones. A `--start` that never
-gets its end ping stays **running** until the next `--start`, which records
-it as failed.
+and the dashboard treat pinged runs like wrapped ones.
+
+A `--start` that never gets its end ping stays **running** until the next
+`--start`, which records it as failed. Pass `--max-duration` to stop waiting
+sooner: a run that goes longer than that without its end ping is recorded as
+**timed out**, and `--on-failure` runs with `CRONWATCH_EVENT=timeout`, without
+waiting for the job to run again. `cronwatch serve` checks every minute, and
+`check`, `jobs`, `runs`, `prune` and the job's own pings check too, so the
+result is the same whichever notices first. Something has to be running to
+notice a ping that never comes: run `cronwatch serve`, or, without it,
+schedule `cronwatch check` from your monitor or from cron
+(`* * * * * cronwatch check >/dev/null`). Missed runs are detected the same
+way. An end ping that arrives after the run timed out records a separate run.
+The limit is kept on the job like `--schedule`: pass it once, and
+`--max-duration 0` removes it.
+
+```sh
+cronwatch ping --start --max-duration 2h nightly-etl
+```
 
 ### `cronwatch check`
 
@@ -639,8 +708,9 @@ cronwatch prune [--keep N] [--older-than DURATION]
 ```
 
 Deletes finished runs: `--keep N` keeps the newest N per job, and
-`--older-than` deletes runs and missed-run records older than a duration
-(`720h` is 30 days). At least one is required. Running runs are never deleted.
+`--older-than` deletes runs, missed-run records, crontab history and delivered,
+undelivered or cancelled alerts older than a duration (`720h` is 30 days). At
+least one is required. Running runs are never deleted.
 
 ```console
 $ cronwatch prune --keep 200 --older-than 720h

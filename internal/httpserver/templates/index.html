@@ -17,7 +17,7 @@
 {{- range .Jobs}}
 <tr>
   <td data-label="Job" class="cell-job"><a href="/jobs/{{.ID}}">{{.Name}}</a><small>{{.Slug}}</small></td>
-  <td data-label="Status" class="cell-status">{{template "status" .Status}}{{if .MissedAt}}<small>expected {{template "time" .MissedAt}}</small>{{end}}</td>
+  <td data-label="Status" class="cell-status">{{template "status" .Status}}{{if .MissedAt}}<small>expected {{template "time" .MissedAt}}</small>{{end}}{{if .UndeliveredAlerts}}<small><a class="text-warning" href="/jobs/{{.ID}}#alerts">{{.UndeliveredAlerts}} {{if eq .UndeliveredAlerts 1}}alert{{else}}alerts{{end}} not delivered</a></small>{{end}}</td>
   <td data-label="Last run">{{if .LastRun}}<a href="/runs/{{.LastRun.ID}}">{{template "time" .LastRun.StartedAt}}</a>{{else}}—{{end}}</td>
   <td data-label="Duration" class="cell-duration"><span>{{if .LastRun}}{{duration .LastRun.DurationMS}}{{with .Trend.SlowRun .LastRun.ID}} {{template "slow" .}}{{end}}{{else}}—{{end}}</span>{{if .Trend.Bars}}{{template "sparkline" .Trend}}{{end}}</td>
   <td data-label="Next expected">{{if .NextExpectedAt}}{{template "time" .NextExpectedAt}}{{else}}—{{end}}</td>

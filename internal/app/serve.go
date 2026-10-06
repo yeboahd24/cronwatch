@@ -135,19 +135,24 @@ func maintenanceLoop(ctx context.Context, done <-chan struct{}, s *storage.Store
 	}
 }
 
-// maintain reaps abandoned runs, then records missed occurrences and runs the
-// --on-failure hooks of jobs that just started missing runs. Reaping first
-// means a dead run's status is settled before missed runs are judged.
+// maintain reaps abandoned runs and times out heartbeat runs past their
+// --max-duration, then records missed occurrences, queues the --on-failure
+// alerts of jobs that just started missing runs, and delivers every job's due
+// alerts. Settling dead and overdue runs first means their status is known
+// before missed runs are judged.
 func maintain(ctx context.Context, s *storage.Store, stderr io.Writer) error {
 	if _, err := s.ReapAbandonedRuns(ctx); err != nil {
 		return fmt.Errorf("reap abandoned runs: %w", err)
 	}
+	expireHeartbeats(ctx, s, "", time.Now(), stderr)
 	// Failures recorded before signatures existed are signed a batch at a time.
 	if _, err := s.BackfillFailureSignatures(ctx, 500); err != nil {
 		return fmt.Errorf("sign earlier failures: %w", err)
 	}
 	missed, err := s.DetectMissedJobs(ctx, time.Now())
 	notifyMissed(ctx, s, missed, stderr)
+	// Deliver the alerts just queued and retry earlier ones that failed.
+	deliverAlerts(ctx, s, "", stderr)
 	if err != nil {
 		return fmt.Errorf("detect missed runs: %w", err)
 	}

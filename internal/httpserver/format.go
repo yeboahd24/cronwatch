@@ -18,6 +18,7 @@ var statusLabels = map[string]string{
 	"skipped":          "Skipped",
 	"never_run":        "Never run",
 	"invalid_schedule": "Invalid schedule",
+	"recovered":        "Recovered",
 }
 
 func statusLabel(status string) string {

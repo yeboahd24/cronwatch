@@ -443,6 +443,67 @@ func (q *Queries) ListFailureGroups(ctx context.Context, arg ListFailureGroupsPa
 	return items, nil
 }
 
+const listOpenHeartbeatRunsWithLimit = `-- name: ListOpenHeartbeatRunsWithLimit :many
+SELECT runs.id, runs.job_id, runs.started_at, runs.ended_at, runs.duration_ms, runs.status, runs.exit_code, runs.stdout, runs.stderr, runs.combined_log, runs.truncated, runs.created_at, runs.pid, runs.host, runs.env_hash, runs.reason, runs.overlapped_run_id, runs.max_rss_kb, runs.user_cpu_ms, runs.sys_cpu_ms, runs.failure_signature, jobs.max_duration_seconds
+FROM runs JOIN jobs ON jobs.id = runs.job_id
+WHERE runs.status = 'running' AND runs.pid IS NULL AND jobs.max_duration_seconds IS NOT NULL
+  AND (?1 IS NULL OR runs.job_id = ?1)
+ORDER BY runs.started_at
+`
+
+type ListOpenHeartbeatRunsWithLimitRow struct {
+	Run                Run
+	MaxDurationSeconds sql.NullInt64
+}
+
+// Heartbeat runs still waiting for their end ping, of jobs with a
+// --max-duration, oldest first.
+func (q *Queries) ListOpenHeartbeatRunsWithLimit(ctx context.Context, jobID interface{}) ([]ListOpenHeartbeatRunsWithLimitRow, error) {
+	rows, err := q.db.QueryContext(ctx, listOpenHeartbeatRunsWithLimit, jobID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOpenHeartbeatRunsWithLimitRow
+	for rows.Next() {
+		var i ListOpenHeartbeatRunsWithLimitRow
+		if err := rows.Scan(
+			&i.Run.ID,
+			&i.Run.JobID,
+			&i.Run.StartedAt,
+			&i.Run.EndedAt,
+			&i.Run.DurationMs,
+			&i.Run.Status,
+			&i.Run.ExitCode,
+			&i.Run.Stdout,
+			&i.Run.Stderr,
+			&i.Run.CombinedLog,
+			&i.Run.Truncated,
+			&i.Run.CreatedAt,
+			&i.Run.Pid,
+			&i.Run.Host,
+			&i.Run.EnvHash,
+			&i.Run.Reason,
+			&i.Run.OverlappedRunID,
+			&i.Run.MaxRssKb,
+			&i.Run.UserCpuMs,
+			&i.Run.SysCpuMs,
+			&i.Run.FailureSignature,
+			&i.MaxDurationSeconds,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRunDurations = `-- name: ListRunDurations :many
 SELECT id, started_at, duration_ms, status FROM runs
 WHERE job_id = ? AND status NOT IN ('running', 'skipped') AND duration_ms IS NOT NULL

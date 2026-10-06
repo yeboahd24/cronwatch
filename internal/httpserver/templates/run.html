@@ -32,6 +32,7 @@
     {{if and .Run.OverlappedRunID (ne .Run.Status "skipped")}}<dt>Overlap</dt><dd class="text-warning">Started while <a href="/runs/{{.Run.OverlappedRunID}}">an earlier run</a> was still running</dd>{{end}}
     {{with .Run.Usage}}<dt>Peak memory</dt><dd>{{kb .MaxRSSKB}}</dd>
     <dt>CPU time</dt><dd>{{ms .UserCPUMS}} user, {{ms .SysCPUMS}} system</dd>{{end}}
+    {{range .Alerts}}<dt>{{if eq .Hook "on_recover"}}Recovery alert{{else}}Failure alert{{end}}</dt><dd>{{template "delivery" .}}{{if .LastError}}: <code>{{.LastError}}</code>{{end}} <a href="/jobs/{{$.Data.Job.ID}}#alerts">All alerts</a></dd>{{end}}
     {{if .Run.Truncated}}<dt>Output</dt><dd class="text-warning">Truncated — the middle of the output was dropped to fit the capture limit</dd>{{end}}
   </dl>
 </section>

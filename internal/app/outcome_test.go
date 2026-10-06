@@ -36,9 +36,22 @@ func TestJudge(t *testing.T) {
 		{"rules apply after ok codes", runRules{OKCodes: []int{3}, FailMatch: regexp.MustCompile(`ERROR`)}, runner.Result{Status: "failed", ExitCode: 3, Stderr: "ERROR"}, "failed", "--fail-if-match"},
 		{"timeout", runRules{Timeout: time.Minute}, runner.Result{Status: "timeout", ExitCode: 143}, "timeout", "timed out after 1m0s"},
 		{"cancelled ignores rules", runRules{FailOnStderr: true}, runner.Result{Status: "cancelled", Stderr: "x"}, "cancelled", ""},
+		{"patterns match one line", runRules{FailMatch: regexp.MustCompile(`^ERROR$`)}, runner.Result{Status: "success", Stdout: "ok\r\nERROR\r\n"}, "failed", "--fail-if-match"},
+		{"patterns do not span lines", runRules{FailMatch: regexp.MustCompile(`ok\nERROR`)}, runner.Result{Status: "success", Stdout: "ok\nERROR\n"}, "success", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			status, reason := tc.rules.judge(tc.res)
+			// Feed the output through the rules as the runner would.
+			var seen outputSeen
+			watch := tc.rules.watch(&seen)
+			for _, out := range []struct {
+				text   string
+				stderr bool
+			}{{tc.res.Stdout, false}, {tc.res.Stderr, true}} {
+				for line := range strings.Lines(out.text) {
+					watch([]byte(strings.TrimSuffix(line, "\n")), out.stderr)
+				}
+			}
+			status, reason := tc.rules.judge(tc.res, seen)
 			if status != tc.status || (tc.want == "") != (reason == "") || !strings.Contains(reason, tc.want) {
 				t.Fatalf("judge = %q, %q; want %q, reason containing %q", status, reason, tc.status, tc.want)
 			}
@@ -110,6 +123,27 @@ func TestRunAppliesRules(t *testing.T) {
 		t.Fatalf("ok code run = %+v", r)
 	}
 
+	// Rules see the whole output, not only what fits in --max-log-bytes.
+	middle := "seq 100; echo 'ERROR: lost'; seq 1000"
+	if err, _ := run("--name", "middle", "--max-log-bytes", "64", "--fail-if-match", "ERROR", "--", "sh", "-c", middle); err != nil {
+		t.Fatal(err)
+	}
+	if r := lastRun(t, dir, "middle"); r.Status != "failed" || !r.Truncated || strings.Contains(r.Stdout, "ERROR") || !strings.Contains(r.Reason, "ERROR: lost") {
+		t.Fatalf("truncated fail match = %+v", r)
+	}
+	if err, _ := run("--name", "marker", "--max-log-bytes", "64", "--success-if-match", "^Backup complete$", "--", "sh", "-c", "seq 100; echo 'Backup complete'; seq 1000"); err != nil {
+		t.Fatal(err)
+	}
+	if r := lastRun(t, dir, "marker"); r.Status != "success" || !r.Truncated {
+		t.Fatalf("truncated success match = %+v", r)
+	}
+	if err, _ := run("--name", "quiet", "--max-log-bytes", "0", "--fail-on-stderr", "--", "sh", "-c", "echo oops >&2"); err != nil {
+		t.Fatal(err)
+	}
+	if r := lastRun(t, dir, "quiet"); r.Status != "failed" || !strings.Contains(r.Reason, "oops") {
+		t.Fatalf("unkept stderr = %+v", r)
+	}
+
 	started := time.Now()
 	if err, _ := run("--name", "slow", "--timeout", "200ms", "--", "sh", "-c", "sleep 30"); !errors.As(err, &exit) || exit.Code != 143 {
 		t.Fatalf("timeout: %v", err)
@@ -179,4 +213,79 @@ func waitFor(t *testing.T, path string) {
 		}
 	}
 	t.Fatalf("%s was not created", path)
+}
+
+func TestStorageErrors(t *testing.T) {
+	ctx := context.Background()
+	// A directory where the database should be makes it unopenable, while
+	// the data directory, and so the job lock, still work.
+	brokenDB := t.TempDir()
+	if err := os.Mkdir(filepath.Join(brokenDB, "cronwatch.db"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// A file as the data directory breaks the lock too.
+	noDir := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(noDir, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(t.TempDir(), "ran")
+	command := []string{"--", "sh", "-c", "echo ran >> " + marker + "; echo ERROR; exit 3"}
+	run := func(dir string, extra ...string) (error, string) {
+		_ = os.Remove(marker)
+		var errOut bytes.Buffer
+		args := append(append([]string{"run", "--name", "job", "--data-dir", dir}, extra...), command...)
+		return Run(ctx, args, &bytes.Buffer{}, &errOut), errOut.String()
+	}
+	ran := func() bool {
+		_, err := os.Stat(marker)
+		return err == nil
+	}
+
+	// By default nothing runs when the run cannot be recorded.
+	if err, _ := run(brokenDB); err == nil || ran() {
+		t.Fatalf("default: err = %v, ran = %v", err, ran())
+	}
+	// With run, the command runs unrecorded and exits with its own code.
+	err, errOut := run(brokenDB, "--on-storage-error", "run")
+	if exit, ok := errors.AsType[*ExitError](err); !ok || exit.Code != 3 || !ran() || !strings.Contains(errOut, "this run will not be recorded (--on-storage-error run)") {
+		t.Fatalf("run: err = %v, ran = %v, stderr = %q", err, ran(), errOut)
+	}
+	// Rules still decide the status, and so the --strict-exit code.
+	if err, _ := run(brokenDB, "--on-storage-error", "run", "--ok-codes", "3", "--fail-if-match", "ERROR", "--strict-exit"); !errors.As(err, new(*ExitError)) || err.(*ExitError).Code != 3 {
+		t.Fatalf("rules: err = %v", err)
+	}
+	// The crontab variable sets it; the flag takes precedence.
+	t.Setenv(envOnStorageError, "run")
+	if err, _ := run(brokenDB); !ran() {
+		t.Fatalf("from the environment: err = %v", err)
+	}
+	if err, _ := run(brokenDB, "--on-storage-error", "fail"); err == nil || ran() {
+		t.Fatalf("flag over environment: err = %v, ran = %v", err, ran())
+	}
+	t.Setenv(envOnStorageError, "maybe")
+	if err, _ := run(brokenDB); err == nil || ran() {
+		t.Fatalf("invalid environment value: err = %v", err)
+	}
+	t.Setenv(envOnStorageError, "")
+	if err, _ := run(brokenDB, "--on-storage-error", "maybe"); err == nil || ran() {
+		t.Fatalf("invalid flag value: err = %v", err)
+	}
+
+	// Without the lock, --no-overlap cannot be kept, so nothing runs; without
+	// --no-overlap the command runs.
+	if err, _ := run(noDir, "--on-storage-error", "run", "--no-overlap"); err == nil || ran() || !strings.Contains(err.Error(), "--no-overlap cannot check") {
+		t.Fatalf("no lock with --no-overlap: err = %v, ran = %v", err, ran())
+	}
+	if run(noDir, "--on-storage-error", "run"); !ran() {
+		t.Fatal("no lock without --no-overlap did not run")
+	}
+	// With the lock held by another run, --no-overlap skips as usual.
+	lock, locked, err := lockJob(brokenDB, "job")
+	if err != nil || !locked {
+		t.Fatalf("lock: %v, %v", locked, err)
+	}
+	defer lock.Close()
+	if err, errOut := run(brokenDB, "--on-storage-error", "run", "--no-overlap"); err != nil || ran() || !strings.Contains(errOut, "skipped") {
+		t.Fatalf("held lock: err = %v, ran = %v, stderr = %q", err, ran(), errOut)
+	}
 }

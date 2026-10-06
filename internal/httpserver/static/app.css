@@ -48,6 +48,8 @@ a:focus-visible, button:focus-visible, input:focus-visible, .log-viewer:focus-vi
 
 .muted { color: var(--muted); }
 .text-warning { color: var(--warning); }
+.text-danger { color: var(--danger); }
+.text-success { color: var(--success); }
 
 /* Masthead */
 
@@ -393,6 +395,12 @@ code, pre { font-family: var(--mono); font-size: 13px; }
 .history li + li { border-top: 1px solid var(--border); }
 .history time { display: inline-block; min-width: 110px; color: var(--muted); }
 .history code { color: var(--log-text); }
+
+/* Alerts */
+
+.alerts-table details { margin-top: 6px; }
+.alerts-table summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+.alerts-table pre { margin: 6px 0 0; max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--log-text); font-size: 12px; }
 
 /* Failure history */
 

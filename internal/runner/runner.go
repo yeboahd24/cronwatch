@@ -25,9 +25,16 @@ type Result struct {
 	Usage                    *model.Usage // nil if the command never started
 }
 
+// LineFunc is called with each line of output as it is captured, before any
+// of it is dropped to fit the log limits. line excludes the newline, a line
+// longer than 64 KiB arrives in 64 KiB pieces, and line is only valid during
+// the call. Calls are serialized, in the order the lines reach the combined log.
+type LineFunc func(line []byte, stderr bool)
+
 type capture struct {
 	mu                       sync.Mutex
 	stdout, stderr, combined *boundedBuffer
+	onLine                   LineFunc
 }
 
 // maxPendingLine bounds a partial line held back from the combined log, so
@@ -69,6 +76,9 @@ func (s *stream) Write(p []byte) (int, error) {
 }
 
 func (s *stream) emit(line []byte) {
+	if s.c.onLine != nil {
+		s.c.onLine(line, s.stderr)
+	}
 	if s.stderr {
 		s.c.combined.Write([]byte{logs.StderrMark})
 	}
@@ -84,12 +94,12 @@ func (s *stream) flush() {
 	}
 }
 
-func Execute(ctx context.Context, command []string, echoStdout, echoStderr io.Writer, maxLogBytes int64) (Result, error) {
+func Execute(ctx context.Context, command []string, echoStdout, echoStderr io.Writer, maxLogBytes int64, onLine LineFunc) (Result, error) {
 	var result Result
 	if maxLogBytes < 0 {
 		return result, errors.New("max log bytes must be non-negative")
 	}
-	c := &capture{stdout: newBoundedBuffer(maxLogBytes), stderr: newBoundedBuffer(maxLogBytes), combined: newBoundedBuffer(2 * maxLogBytes)}
+	c := &capture{stdout: newBoundedBuffer(maxLogBytes), stderr: newBoundedBuffer(maxLogBytes), combined: newBoundedBuffer(2 * maxLogBytes), onLine: onLine}
 	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
 	stdoutStream := &stream{c: c, dst: c.stdout, echo: echoStdout}
 	stderrStream := &stream{c: c, dst: c.stderr, echo: echoStderr, stderr: true}

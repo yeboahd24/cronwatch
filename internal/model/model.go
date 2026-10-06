@@ -17,6 +17,9 @@ type Job struct {
 	// OnFailure and OnRecover are shell commands run when the job starts
 	// failing or recovers; empty means none.
 	OnFailure, OnRecover string
+	// MaxDurationSeconds is how long a heartbeat run may wait for its end
+	// ping before it is recorded as timed out; 0 means no limit.
+	MaxDurationSeconds int64
 }
 
 type Run struct {

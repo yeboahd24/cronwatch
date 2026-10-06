@@ -34,18 +34,23 @@ func newJSONRun(r model.Run, job model.Job) jsonRun {
 }
 
 type jsonJob struct {
-	Slug           string     `json:"slug"`
-	Name           string     `json:"name"`
-	Status         string     `json:"status"`
-	Schedule       *string    `json:"schedule"`
-	GraceSeconds   int64      `json:"grace_seconds"`
-	LastRun        *jsonRun   `json:"last_run"`
-	NextExpectedAt *time.Time `json:"next_expected_at"`
-	MissedAt       *time.Time `json:"missed_at"`
+	Slug         string  `json:"slug"`
+	Name         string  `json:"name"`
+	Status       string  `json:"status"`
+	Schedule     *string `json:"schedule"`
+	GraceSeconds int64   `json:"grace_seconds"`
+	// MaxDurationSeconds is null when heartbeat runs have no limit.
+	MaxDurationSeconds *int64     `json:"max_duration_seconds"`
+	LastRun            *jsonRun   `json:"last_run"`
+	NextExpectedAt     *time.Time `json:"next_expected_at"`
+	MissedAt           *time.Time `json:"missed_at"`
 }
 
 func newJSONJob(v model.JobView) jsonJob {
 	out := jsonJob{Slug: v.Slug, Name: v.Name, Status: v.Status, Schedule: v.Schedule, GraceSeconds: v.GraceSeconds}
+	if v.MaxDurationSeconds > 0 {
+		out.MaxDurationSeconds = &v.MaxDurationSeconds
+	}
 	if v.LastRun != nil {
 		r := newJSONRun(*v.LastRun, v.Job)
 		out.LastRun = &r

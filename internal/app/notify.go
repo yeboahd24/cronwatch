@@ -1,13 +1,13 @@
 package app
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -60,39 +60,177 @@ func (e hookEvent) environ() []string {
 	return env
 }
 
-// runHook runs command with sh, passing the event in CRONWATCH_* variables.
-// Its output is shown only if it fails; a failing hook never changes the
-// job's result.
-func runHook(command, flag string, e hookEvent, stderr io.Writer) {
+// Alert retries back off from alertRetryMin, doubling up to alertRetryMax,
+// until alertMaxAttempts attempts have failed: about seven hours in all.
+const (
+	alertMaxAttempts = 12
+	alertRetryMin    = time.Minute
+	alertRetryMax    = time.Hour
+)
+
+// hookOutputLimit bounds how much of a hook's output is kept, from its end.
+const hookOutputLimit = 4 << 10
+
+// alertRetryDelay is how long to wait after the given number of failed attempts.
+func alertRetryDelay(attempts int) time.Duration {
+	d := alertRetryMin
+	for i := 1; i < attempts && d < alertRetryMax; i++ {
+		d *= 2
+	}
+	return min(d, alertRetryMax)
+}
+
+// hookName is the flag that sets a hook, for messages.
+func hookName(hook string) string {
+	if hook == "on_recover" {
+		return "--on-recover"
+	}
+	return "--on-failure"
+}
+
+// queueAlert records that the job's hook should run for e. It is delivered
+// by the next deliverAlerts for the job.
+func queueAlert(ctx context.Context, s *storage.Store, hook string, e hookEvent, stderr io.Writer) {
+	a := storage.NewAlert{JobID: e.Job.ID, Event: e.Kind, Hook: hook, Environ: e.environ(), Created: time.Now()}
+	if e.Run != nil {
+		a.RunID = e.Run.ID
+	}
+	if err := s.QueueAlert(ctx, a); err != nil {
+		fmt.Fprintf(stderr, "cronwatch: %s hook for %s not run: could not record the alert: %v\n", hookName(hook), e.Job.Name, err)
+	}
+}
+
+// deliverAlerts attempts the due pending alerts of the job with jobID, or of
+// every job if jobID is "". A job's alerts are delivered in the order they
+// were raised, so one that is waiting to be retried holds back later ones.
+func deliverAlerts(ctx context.Context, s *storage.Store, jobID string, stderr io.Writer) {
+	pending, err := s.PendingAlerts(ctx, jobID)
+	if err != nil {
+		fmt.Fprintf(stderr, "cronwatch: warning: could not read pending alerts: %v\n", err)
+		return
+	}
+	blocked := map[string]bool{}
+	for _, a := range pending {
+		if blocked[a.JobID] || ctx.Err() != nil {
+			continue
+		}
+		if a.Command == "" {
+			if err := s.CancelAlert(ctx, a.ID, hookName(a.Hook)+" hook was removed"); err != nil {
+				fmt.Fprintf(stderr, "cronwatch: warning: could not cancel an alert: %v\n", err)
+			}
+			continue
+		}
+		if !deliverAlert(ctx, s, a, stderr) {
+			blocked[a.JobID] = true
+		}
+	}
+}
+
+// deliverAlert makes one attempt at a due alert and records the result. It
+// reports whether the alert is done with, delivered or given up on.
+func deliverAlert(ctx context.Context, s *storage.Store, a storage.PendingAlert, stderr io.Writer) bool {
+	now := time.Now()
+	// The lease outlasts the hook's timeout, so it only runs out if this
+	// process dies mid-attempt.
+	claimed, err := s.ClaimAlert(ctx, a.ID, now, now.Add(hookTimeout+time.Minute))
+	if err != nil {
+		fmt.Fprintf(stderr, "cronwatch: warning: could not claim an alert: %v\n", err)
+		return false
+	}
+	if !claimed {
+		return false // not yet due, or another process has it
+	}
+	attempt := a.Attempts + 1
+	env := append(slices.Clone(a.Environ), "CRONWATCH_ALERT_ID="+a.ID, "CRONWATCH_ATTEMPT="+strconv.Itoa(attempt))
+	output, runErr := runHook(a.Command, env)
+	status, errText := storage.AlertDelivered, ""
+	var retryAt *time.Time
+	if runErr != nil {
+		errText = runErr.Error()
+		status = storage.AlertUndelivered
+		next := "giving up"
+		if attempt < alertMaxAttempts {
+			status = storage.AlertPending
+			t := time.Now().Add(alertRetryDelay(attempt))
+			retryAt = &t
+			next = "retrying in " + strings.TrimSuffix(strings.TrimSuffix(alertRetryDelay(attempt).String(), "0s"), "0m")
+		}
+		fmt.Fprintf(stderr, "cronwatch: %s hook for %s failed: %v (attempt %d of %d, %s)\n",
+			hookName(a.Hook), a.JobName, runErr, attempt, alertMaxAttempts, next)
+		if output != "" {
+			fmt.Fprintln(stderr, output)
+		}
+	}
+	// Record the result even if ctx was cancelled during the hook.
+	finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	if err := s.FinishAlertAttempt(finishCtx, a.ID, status, retryAt, errText, output); err != nil {
+		fmt.Fprintf(stderr, "cronwatch: warning: could not record the alert's delivery: %v\n", err)
+	}
+	return status != storage.AlertPending
+}
+
+// runHook runs command with sh and the extra environment, returning the end
+// of its combined output.
+func runHook(command string, env []string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), hookTimeout)
 	defer cancel()
-	var out bytes.Buffer
+	out := &tailBuffer{limit: hookOutputLimit}
 	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", command)
-	cmd.Env = append(os.Environ(), e.environ()...)
-	cmd.Stdout, cmd.Stderr = &out, &out
+	cmd.Env = append(os.Environ(), env...)
+	// One writer for both streams makes exec share a single pipe, so Write
+	// is never called concurrently.
+	cmd.Stdout, cmd.Stderr = out, out
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = time.Second
 	err := cmd.Run()
-	if err == nil {
-		return
-	}
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		err = fmt.Errorf("timed out after %s", hookTimeout)
 	}
-	output := strings.TrimSpace(out.String())
-	if len(output) > 2000 {
-		output = "…" + output[len(output)-2000:]
-	}
-	fmt.Fprintf(stderr, "cronwatch: %s hook for %s failed: %v\n", flag, e.Job.Name, err)
-	if output != "" {
-		fmt.Fprintln(stderr, output)
-	}
+	return out.String(), err
 }
 
-// notifyRun runs the job's hook if run changed the job between ok and
-// failing. Runs that were cancelled or skipped change nothing.
+// tailBuffer keeps the last limit bytes written to it, holding at most twice
+// that in memory.
+type tailBuffer struct {
+	limit   int
+	buf     []byte
+	dropped bool
+}
+
+func (b *tailBuffer) Write(p []byte) (int, error) {
+	n := len(p)
+	if len(p) > b.limit {
+		p = p[len(p)-b.limit:]
+		b.dropped = true
+	}
+	b.buf = append(b.buf, p...)
+	if len(b.buf) > 2*b.limit {
+		b.buf = append(b.buf[:0], b.buf[len(b.buf)-b.limit:]...)
+		b.dropped = true
+	}
+	return n, nil
+}
+
+// String returns the kept output, trimmed, starting with "…" if some was dropped.
+func (b *tailBuffer) String() string {
+	out := b.buf
+	if len(out) > b.limit {
+		out, b.dropped = out[len(out)-b.limit:], true
+	}
+	text := strings.TrimSpace(strings.ToValidUTF8(string(out), ""))
+	if b.dropped && text != "" {
+		text = "…" + text
+	}
+	return text
+}
+
+// notifyRun queues the job's hook if run changed the job between ok and
+// failing, then delivers the job's due alerts, including retries of earlier
+// ones. Runs that were cancelled or skipped change nothing.
 func notifyRun(ctx context.Context, s *storage.Store, job model.Job, run model.Run, stderr io.Writer) {
+	defer deliverAlerts(ctx, s, job.ID, stderr)
 	failing := model.Failing(run.Status)
 	if (!failing && run.Status != "success") || (job.OnFailure == "" && job.OnRecover == "") {
 		return
@@ -104,14 +242,14 @@ func notifyRun(ctx context.Context, s *storage.Store, job model.Job, run model.R
 	}
 	switch {
 	case failing && !wasFailing && job.OnFailure != "":
-		runHook(job.OnFailure, "--on-failure", hookEvent{Kind: run.Status, Job: job, Run: &run}, stderr)
+		queueAlert(ctx, s, "on_failure", hookEvent{Kind: run.Status, Job: job, Run: &run}, stderr)
 	case !failing && wasFailing && job.OnRecover != "":
-		runHook(job.OnRecover, "--on-recover", hookEvent{Kind: "recovered", Job: job, Run: &run}, stderr)
+		queueAlert(ctx, s, "on_recover", hookEvent{Kind: "recovered", Job: job, Run: &run}, stderr)
 	}
 }
 
-// notifyMissed runs --on-failure hooks for jobs whose newly recorded missed
-// occurrences turned them from ok to failing.
+// notifyMissed queues --on-failure alerts for jobs whose newly recorded
+// missed occurrences turned them from ok to failing. maintain delivers them.
 func notifyMissed(ctx context.Context, s *storage.Store, missed []storage.NewlyMissed, stderr io.Writer) {
 	for _, m := range missed {
 		if m.Job.OnFailure == "" {
@@ -124,7 +262,7 @@ func notifyMissed(ctx context.Context, s *storage.Store, missed []storage.NewlyM
 			continue
 		}
 		if !wasFailing {
-			runHook(m.Job.OnFailure, "--on-failure", hookEvent{Kind: "missed", Job: m.Job, ExpectedAt: first}, stderr)
+			queueAlert(ctx, s, "on_failure", hookEvent{Kind: "missed", Job: m.Job, ExpectedAt: first}, stderr)
 		}
 	}
 }
