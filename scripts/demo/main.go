@@ -9,6 +9,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -17,8 +18,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yeboahd24/cronwatch/internal/hub"
 	"github.com/yeboahd24/cronwatch/internal/model"
 	"github.com/yeboahd24/cronwatch/internal/runenv"
+	"github.com/yeboahd24/cronwatch/internal/runner"
 	"github.com/yeboahd24/cronwatch/internal/storage"
 )
 
@@ -142,6 +145,14 @@ func (d *demo) fill() error {
 	failed := d.record(backup, run{start: at(0, 2, 0), took: 1200 * time.Millisecond, status: "failed", code: 127, env: cron,
 		stdout: fmt.Sprintf("Starting backup -> db_%s.sql.gz\n", at(0, 2, 0).Format("20060102")),
 		stderr: "backup.sh: line 12: pg_dump: command not found\n"})
+	// Its --on-failure alert has failed three times and is being retried.
+	notify := "/home/deploy/bin/notify-slack"
+	if _, err := d.s.UpsertJob(d.ctx, storage.JobSpec{Slug: backup.Slug, Name: backup.Name, Command: backup.Command, OnFailure: &notify}); err != nil {
+		return err
+	}
+	if err := d.failingAlert(backup, failed, at(0, 2, 0), now); err != nil {
+		return err
+	}
 
 	// Nightly Export: getting slower over the last week, with one very slow
 	// night and an old upstream failure.
@@ -181,7 +192,17 @@ func (d *demo) fill() error {
 		}
 		d.record(ingest, r)
 	}
-	if _, err := d.s.CreateHeartbeatRun(d.ctx, ingest.ID, current); err != nil {
+	live, err := d.s.CreateHeartbeatRun(d.ctx, ingest.ID, current)
+	if err != nil {
+		return err
+	}
+	// The run in progress has written some output so far.
+	var progress strings.Builder
+	for i := 1; i <= 9; i++ {
+		fmt.Fprintf(&progress, "Fetched batch %d/24 (%d items)\n", i, 30+d.rng.IntN(40))
+	}
+	progress.WriteString("Waiting for rate limit to reset (429 from api.partner.example)\n")
+	if err := d.s.SaveRunOutput(d.ctx, live.ID, runner.Output{Stdout: progress.String(), Combined: progress.String()}, now.Add(-40*time.Second)); err != nil {
 		return err
 	}
 
@@ -236,6 +257,86 @@ func (d *demo) fill() error {
 	if _, err := d.s.BackfillFailureSignatures(d.ctx, 500); err != nil {
 		return err
 	}
-	fmt.Printf("FAILED_RUN=%s\nEXPORT_JOB=%s\nINGEST_JOB=%s\n", failed, export.ID, ingest.ID)
+	if err := d.servers(now); err != nil {
+		return err
+	}
+	fmt.Printf("FAILED_RUN=%s\nEXPORT_JOB=%s\nINGEST_JOB=%s\nLIVE_RUN=%s\n", failed, export.ID, ingest.ID, live.ID)
+	return nil
+}
+
+// failingAlert records an --on-failure alert for run whose hook has failed
+// three times, the next retry a few minutes away.
+func (d *demo) failingAlert(j model.Job, runID string, raised, now time.Time) error {
+	if err := d.s.QueueAlert(d.ctx, storage.NewAlert{JobID: j.ID, RunID: runID, Event: "failed", Hook: "on_failure", Created: raised}); err != nil {
+		return err
+	}
+	pending, err := d.s.PendingAlerts(d.ctx, j.ID)
+	if err != nil || len(pending) != 1 {
+		return fmt.Errorf("pending alerts: %v, %w", pending, err)
+	}
+	for attempt := 1; attempt <= 3; attempt++ {
+		if _, err := d.s.ClaimAlert(d.ctx, pending[0].ID, now, now.Add(time.Minute)); err != nil {
+			return err
+		}
+		retry := now.Add(-time.Second) // due again, for the next attempt
+		if attempt == 3 {
+			retry = now.Add(4 * time.Minute)
+		}
+		if err := d.s.FinishAlertAttempt(d.ctx, pending[0].ID, storage.AlertPending, &retry, "exit status 22",
+			"curl: (22) The requested URL returned error: 503\nhooks.slack.example: service unavailable"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// servers makes this CronWatch a hub for three servers: one reporting, with
+// a failing job; one that stopped reporting 25 minutes ago; and one added but
+// not yet reporting.
+func (d *demo) servers(now time.Time) error {
+	ago := func(dur time.Duration) *time.Time { t := now.Add(-dur); return &t }
+	every := func(s string) *string { return &s }
+	hosts := []struct {
+		name     string
+		reported time.Duration // 0: never
+		report   hub.Report
+	}{
+		{"web-1", 40 * time.Second, hub.Report{Hostname: "web-1.prod.internal", MaintainedAt: ago(40 * time.Second), Jobs: []hub.Job{
+			{Slug: "certbot-renew", Name: "Certbot renew", Status: "failed", Schedule: every("17 3 * * *"), NextExpectedAt: ago(-17 * time.Hour),
+				LastRun: &hub.Run{StartedAt: *ago(7 * time.Hour), Status: "failed", ExitCode: new(1),
+					LastError: "Challenge failed for domain shop.example.com: DNS problem: NXDOMAIN"}},
+			{Slug: "log-rotate", Name: "Nginx log rotate", Status: "success", Schedule: every("0 0 * * *"), NextExpectedAt: ago(-14 * time.Hour),
+				LastRun: &hub.Run{StartedAt: *ago(10 * time.Hour), Status: "success", ExitCode: new(0)}},
+			{Slug: "sitemap", Name: "Sitemap build", Status: "success", Schedule: every("30 * * * *"), NextExpectedAt: ago(-20 * time.Minute),
+				LastRun: &hub.Run{StartedAt: *ago(40 * time.Minute), Status: "success", ExitCode: new(0)}},
+		}}},
+		{"db-1", 25 * time.Minute, hub.Report{Hostname: "db-1.prod.internal", MaintainedAt: ago(25 * time.Minute), Jobs: []hub.Job{
+			{Slug: "pg-vacuum", Name: "Postgres vacuum", Status: "success", Schedule: every("0 4 * * *"), NextExpectedAt: ago(-20 * time.Hour),
+				LastRun: &hub.Run{StartedAt: *ago(6 * time.Hour), Status: "success", ExitCode: new(0)}},
+			{Slug: "wal-archive", Name: "WAL archive check", Status: "success", Schedule: every("*/15 * * * *"), NextExpectedAt: ago(-5 * time.Minute),
+				LastRun: &hub.Run{StartedAt: *ago(30 * time.Minute), Status: "success", ExitCode: new(0)}},
+		}}},
+		{"worker-2", 0, hub.Report{}},
+	}
+	for _, h := range hosts {
+		if _, err := d.s.CreateHost(d.ctx, h.name, now.Add(-2*day)); err != nil {
+			return err
+		}
+		if h.reported == 0 {
+			continue
+		}
+		host, err := d.s.HostByName(d.ctx, h.name)
+		if err != nil {
+			return err
+		}
+		h.report.Version, h.report.Cronwatch, h.report.SentAt = hub.ReportVersion, "v0.11.1", now.Add(-h.reported)
+		body, err := json.Marshal(h.report)
+		if err != nil {
+			return err
+		}
+		if err := d.s.SaveHostReport(d.ctx, host.ID, now.Add(-h.reported), body); err != nil {
+			return err
+		}
+	}
 	return nil
 }

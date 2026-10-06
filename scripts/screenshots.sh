@@ -16,11 +16,21 @@ trap '[ -n "$pid" ] && kill "$pid" 2>/dev/null; rm -rf "$tmp"' EXIT HUP INT TERM
 
 # Fixed time zone so the pages read the same wherever this runs.
 export TZ=UTC
-go build -o "$tmp/cronwatch" ./cmd/cronwatch
-eval "$(go run ./scripts/demo -data-dir "$tmp/data")" # sets FAILED_RUN, EXPORT_JOB, INGEST_JOB
+# Stamp the latest release, as the Servers page shows each server's version.
+version=$(git describe --tags --abbrev=0 2>/dev/null || echo dev)
+go build -ldflags "-X github.com/yeboahd24/cronwatch/internal/app.Version=$version" -o "$tmp/cronwatch" ./cmd/cronwatch
+eval "$(go run ./scripts/demo -data-dir "$tmp/data")" # sets FAILED_RUN, EXPORT_JOB, INGEST_JOB, LIVE_RUN
 
 port=8790
-"$tmp/cronwatch" serve --data-dir "$tmp/data" --addr "127.0.0.1:$port" --sync-crontab=false >"$tmp/serve.log" 2>&1 &
+# The Servers page names this machine; give it a made-up name where a user
+# namespace allows, so the screenshots do not show the real one.
+serve="$tmp/cronwatch serve --data-dir $tmp/data --addr 127.0.0.1:$port --sync-crontab=false"
+if unshare --uts --map-root-user true 2>/dev/null; then
+  unshare --uts --map-root-user sh -c "hostname ops-hub && exec $serve" >"$tmp/serve.log" 2>&1 &
+else
+  echo "screenshots.sh: warning: cannot set a hostname; the Servers page shows this machine's" >&2
+  $serve >"$tmp/serve.log" 2>&1 &
+fi
 pid=$!
 tries=0
 until curl -fs "http://localhost:$port/healthz" >/dev/null 2>&1; do
@@ -43,3 +53,5 @@ shot jobs.png 1200 860 /
 shot timeline.png 1200 600 /timeline
 shot run-failed.png 1200 1370 "/runs/$FAILED_RUN?stream=compare"
 shot job-durations.png 1200 920 "/jobs/$EXPORT_JOB"
+shot servers.png 1200 1530 /servers
+shot run-live.png 1200 880 "/runs/$LIVE_RUN"

@@ -116,9 +116,11 @@ A run's page also shows why a run counts as failed when its exit code alone
 does not say (see [Deciding success](#deciding-success)), its peak memory and
 CPU time, and whether it started while an earlier run was still going.
 
-![The Jobs page: six jobs with their status, last run, duration and next expected run. Each duration has a small bar chart of recent runs; Nightly Export shows one unusually slow run in yellow. Below, Recent logs shows the failed Database Backup's output ending in "pg_dump: command not found".](docs/images/jobs.png)
+![The Jobs page, "Updated 0s ago": six jobs with their status, last run, duration and next expected run. Database Backup has failed and notes "1 alert not delivered". Each duration has a small bar chart of recent runs; Nightly Export shows one unusually slow run in yellow. Below, Recent logs shows the failed Database Backup's output ending in "pg_dump: command not found".](docs/images/jobs.png)
 
-![A failed run of Database Backup. The last error is "pg_dump: command not found", marked as a new error. A notice says the environment changed since the last successful run: PATH is missing /usr/local/pgsql/bin. The "vs last success" view shows the error as the one new line, and three lines from the last success, from the dump to the upload, as missing.](docs/images/run-failed.png)
+![A failed run of Database Backup. The last error is "pg_dump: command not found", marked as a new error. A notice says the environment changed since the last successful run: PATH is missing /usr/local/pgsql/bin. Its failure alert is "Retrying after 3 failed attempts" with the hook's error. The "vs last success" view shows the error as the one new line, and three lines from the last success, from the dump to the upload, as missing.](docs/images/run-failed.png)
+
+![A run of Ingest Queue still in progress: "Running for 28m. Output last changed 1m ago." Its output so far lists nine fetched batches, then "Waiting for rate limit to reset (429 from api.partner.example)"; the page updates it every few seconds.](docs/images/run-live.png)
 
 ![The Nightly Export job page. Its duration chart shows runs getting taller over the last week with one tall yellow bar for an unusually slow night, and the note "Getting slower: 3m 6s over the last 7 days, up 50% from 2m 4s over the 30 days before." Below, Failure types lists one error, "export: upstream API returned 503 Service Unavailable".](docs/images/job-durations.png)
 
@@ -974,6 +976,8 @@ A report lists each job with its status, schedule, next expected run, missed
 run, pause and undelivered alerts, and its last run's times, exit code,
 reason and, for a failed run, the last line it wrote to stderr. No other
 output leaves the server. Archived jobs are left out.
+
+![The Servers tab on a hub: this server with 2 problems; db-1 stale, with no report for 26 minutes; web-1 with 1 problem; and worker-2, never reported. Below, Jobs on all servers lists the failing and missed jobs first, including web-1's Certbot renew failing with "Challenge failed for domain shop.example.com", and shows db-1's jobs dimmed, "as of 26m ago".](docs/images/servers.png)
 
 **What the hub shows.** A server that has not reported for 3 minutes is
 **stale**: the hub says so, and its jobs are shown dimmed, as of its last
