@@ -1,6 +1,7 @@
 {{define "index.html"}}{{template "head" .}}
 <h1 class="visually-hidden">Jobs</h1>
 {{with .Data}}
+<p class="refresh-status" id="refresh-status" role="status">Updates every 10 seconds.</p>
 <section class="panel table-wrap">
   <table class="jobs-table">
     <thead>

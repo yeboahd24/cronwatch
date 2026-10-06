@@ -249,7 +249,7 @@ func TestRunsPagePagesBeyondTheLimit(t *testing.T) {
 func TestLogsPagesAndFilters(t *testing.T) {
 	server, _, _, _ := historyServer(t)
 	code, body := fetch(t, server, "/logs?q=marker&job=a")
-	if code != http.StatusOK || strings.Count(body, `class="panel log-result"`) != 10 {
+	if code != http.StatusOK || strings.Count(body, `class="panel log-result"`) != 10 || !strings.Contains(body, "10 finished runs whose output contains “marker” on this page, newest first.") {
 		t.Fatalf("filtered search: status %d\n%s", code, body)
 	}
 	// Each page searches 50 runs; the rest are on later pages.
@@ -307,5 +307,42 @@ func TestRunningRunShowsLiveOutput(t *testing.T) {
 	}
 	if _, page := fetch(t, server, "/runs/"+run.ID); strings.Contains(page, "run-live") || !strings.Contains(page, "done") {
 		t.Fatal("a finished run's page still refreshes, or lacks its output")
+	}
+}
+
+func TestErrorsOnlyNoteCountsMatchesAndShown(t *testing.T) {
+	ctx := context.Background()
+	s, err := storage.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	job, err := s.UpsertJob(ctx, storage.JobSpec{Slug: "j", Name: "J", Command: `"true"`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Three runs mention the disk; only one does so on stderr.
+	for i, out := range []struct{ stdout, stderr string }{{"disk ok\n", ""}, {"", "disk full\n"}, {"disk ok\n", "other\n"}} {
+		started := time.Now().Add(time.Duration(i-5) * time.Minute)
+		run, err := s.CreateRun(ctx, job.ID, started)
+		if err != nil {
+			t.Fatal(err)
+		}
+		combined := out.stdout
+		if out.stderr != "" {
+			combined += "\x02" + out.stderr
+		}
+		if err := s.FinishRun(ctx, run.ID, started, 0, "success", new(0), out.stdout, out.stderr, combined, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	server, err := New(s, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, body := fetch(t, server, "/logs?q=disk&errors=1")
+	if strings.Count(body, `class="panel log-result"`) != 1 ||
+		!strings.Contains(body, "3 finished runs whose output contains “disk” on this page, newest first; 1 with matching stderr lines.") {
+		t.Fatalf("errors-only page:\n%s", body)
 	}
 }

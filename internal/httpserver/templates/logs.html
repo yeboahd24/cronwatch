@@ -29,6 +29,9 @@
   {{- else if .Filter.Paged}}No older output.
   {{- else}}No output recorded yet.{{end}}</p></section>
 {{end}}
+{{if .Results}}<p class="page-note">
+  {{- .Scanned}} finished {{if eq .Scanned 1}}run{{else}}runs{{end}}{{with .Filter.Query}} whose output contains “{{.}}”{{end}} on this page, newest first
+  {{- if .Filter.OnlyErrors}}; {{len .Results}} with {{if .Filter.Query}}matching {{end}}stderr lines{{end}}.</p>{{end}}
 {{template "pager" .Pager}}
 {{end}}
 {{template "foot"}}{{end}}
