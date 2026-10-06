@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"regexp"
@@ -35,9 +36,39 @@ func parseOKCodes(v string) ([]int, error) {
 	return codes, nil
 }
 
+// outputSeen is what the output rules found. It is collected line by line
+// while the command runs, so dropping the middle of a long log to fit
+// --max-log-bytes cannot hide a match or a write to stderr.
+type outputSeen struct {
+	stderr     bool   // a non-blank line was written to stderr
+	stderrLine string // the first one
+	failed     bool   // a line matched FailMatch
+	failLine   string // the first one
+	succeeded  bool   // a line matched SuccessMatch
+}
+
+// watch returns a runner.LineFunc that records into seen what the rules look
+// for. Patterns are matched against one line of stdout or stderr at a time,
+// without its newline or a trailing carriage return, so ^ and $ anchor to the
+// line and a pattern never spans lines.
+func (r runRules) watch(seen *outputSeen) runner.LineFunc {
+	return func(line []byte, stderr bool) {
+		line = bytes.TrimSuffix(line, []byte{'\r'})
+		if stderr && !seen.stderr && len(bytes.TrimSpace(line)) > 0 {
+			seen.stderr, seen.stderrLine = true, brief(line)
+		}
+		if r.FailMatch != nil && !seen.failed && r.FailMatch.Match(line) {
+			seen.failed, seen.failLine = true, brief(line)
+		}
+		if r.SuccessMatch != nil && !seen.succeeded && r.SuccessMatch.Match(line) {
+			seen.succeeded = true
+		}
+	}
+}
+
 // judge returns the run's status and, when the exit code alone would not
 // explain it, the reason. Cancelled runs are left as they are.
-func (r runRules) judge(res runner.Result) (status, reason string) {
+func (r runRules) judge(res runner.Result, seen outputSeen) (status, reason string) {
 	switch res.Status {
 	case "cancelled":
 		return res.Status, ""
@@ -47,14 +78,13 @@ func (r runRules) judge(res runner.Result) (status, reason string) {
 	if res.ExitCode != 0 && !slices.Contains(r.OKCodes, res.ExitCode) {
 		return "failed", ""
 	}
-	if r.FailOnStderr && strings.TrimSpace(res.Stderr) != "" {
-		return "failed", "wrote to stderr (--fail-on-stderr): " + firstLine(res.Stderr, nil)
+	if r.FailOnStderr && seen.stderr {
+		return "failed", "wrote to stderr (--fail-on-stderr): " + seen.stderrLine
 	}
-	output := res.Stdout + "\n" + res.Stderr
-	if r.FailMatch != nil && r.FailMatch.MatchString(output) {
-		return "failed", fmt.Sprintf("output matched --fail-if-match %q: %s", r.FailMatch, firstLine(output, r.FailMatch))
+	if r.FailMatch != nil && seen.failed {
+		return "failed", fmt.Sprintf("output matched --fail-if-match %q: %s", r.FailMatch, seen.failLine)
 	}
-	if r.SuccessMatch != nil && !r.SuccessMatch.MatchString(output) {
+	if r.SuccessMatch != nil && !seen.succeeded {
 		return "failed", fmt.Sprintf("output did not match --success-if-match %q", r.SuccessMatch)
 	}
 	if res.ExitCode != 0 {
@@ -63,20 +93,13 @@ func (r runRules) judge(res runner.Result) (status, reason string) {
 	return "success", ""
 }
 
-// firstLine returns the first non-blank line of text, or the first that
-// matches re, trimmed to a readable length.
-func firstLine(text string, re *regexp.Regexp) string {
-	for line := range strings.SplitSeq(text, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || re != nil && !re.MatchString(line) {
-			continue
-		}
-		if len(line) > 200 {
-			line = line[:200] + "…"
-		}
-		return line
+// brief trims a line of output to a readable length for a reason.
+func brief(line []byte) string {
+	s := strings.TrimSpace(string(line[:min(len(line), 1024)]))
+	if len(s) > 200 {
+		s = strings.ToValidUTF8(s[:200], "") + "…"
 	}
-	return ""
+	return s
 }
 
 // exitCode is what "cronwatch run" exits with. By default it is the command's

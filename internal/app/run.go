@@ -286,9 +286,10 @@ func runCommand(ctx context.Context, args []string, stdout, stderr io.Writer) er
 		runCtx, cancelRun = context.WithTimeout(ctx, opts.Rules.Timeout)
 		defer cancelRun()
 	}
-	result, runErr := runner.Execute(runCtx, command, out, errOut, opts.MaxLogBytes)
+	var seen outputSeen
+	result, runErr := runner.Execute(runCtx, command, out, errOut, opts.MaxLogBytes, opts.Rules.watch(&seen))
 	code := result.ExitCode
-	status, reason := opts.Rules.judge(result)
+	status, reason := opts.Rules.judge(result, seen)
 	if reason != "" && status != "success" {
 		fmt.Fprintf(stderr, "cronwatch: %s: %s\n", status, reason)
 	}

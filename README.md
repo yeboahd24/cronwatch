@@ -249,9 +249,16 @@ Each run also records its peak memory and CPU time.
 
 Many scripts exit 0 when they fail. `--ok-codes`, `--fail-on-stderr`,
 `--fail-if-match` and `--success-if-match` let the output decide instead.
-Patterns are matched against stdout and stderr as captured, so with a small
-`--max-log-bytes` a match in the dropped middle is missed. When a rule marks a
-run failed, CronWatch prints why on stderr, and the run page shows it:
+These rules see all of the output as the command writes it, before
+`--max-log-bytes` drops anything, so an `ERROR` in the dropped middle of a long
+log still fails the run. Patterns are Go regular expressions
+([RE2 syntax](https://github.com/google/re2/wiki/Syntax)) matched against one
+line of stdout or stderr at a time, without the newline or a trailing `\r`:
+`^` and `$` anchor to the line, and a pattern never matches across lines. A
+line longer than 64 KiB is matched in 64 KiB pieces. `--fail-if-match` fails
+the run if any line matches; `--success-if-match` needs at least one line to
+match. When a rule marks a run failed, CronWatch prints why on stderr, and the
+run page shows it:
 
 ```console
 $ cronwatch run --name "Database Backup" --fail-if-match 'ERROR' -- ./backup.sh

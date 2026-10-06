@@ -36,9 +36,22 @@ func TestJudge(t *testing.T) {
 		{"rules apply after ok codes", runRules{OKCodes: []int{3}, FailMatch: regexp.MustCompile(`ERROR`)}, runner.Result{Status: "failed", ExitCode: 3, Stderr: "ERROR"}, "failed", "--fail-if-match"},
 		{"timeout", runRules{Timeout: time.Minute}, runner.Result{Status: "timeout", ExitCode: 143}, "timeout", "timed out after 1m0s"},
 		{"cancelled ignores rules", runRules{FailOnStderr: true}, runner.Result{Status: "cancelled", Stderr: "x"}, "cancelled", ""},
+		{"patterns match one line", runRules{FailMatch: regexp.MustCompile(`^ERROR$`)}, runner.Result{Status: "success", Stdout: "ok\r\nERROR\r\n"}, "failed", "--fail-if-match"},
+		{"patterns do not span lines", runRules{FailMatch: regexp.MustCompile(`ok\nERROR`)}, runner.Result{Status: "success", Stdout: "ok\nERROR\n"}, "success", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			status, reason := tc.rules.judge(tc.res)
+			// Feed the output through the rules as the runner would.
+			var seen outputSeen
+			watch := tc.rules.watch(&seen)
+			for _, out := range []struct {
+				text   string
+				stderr bool
+			}{{tc.res.Stdout, false}, {tc.res.Stderr, true}} {
+				for line := range strings.Lines(out.text) {
+					watch([]byte(strings.TrimSuffix(line, "\n")), out.stderr)
+				}
+			}
+			status, reason := tc.rules.judge(tc.res, seen)
 			if status != tc.status || (tc.want == "") != (reason == "") || !strings.Contains(reason, tc.want) {
 				t.Fatalf("judge = %q, %q; want %q, reason containing %q", status, reason, tc.status, tc.want)
 			}
@@ -108,6 +121,27 @@ func TestRunAppliesRules(t *testing.T) {
 	}
 	if r := lastRun(t, dir, "codes"); r.Status != "success" || *r.ExitCode != 3 {
 		t.Fatalf("ok code run = %+v", r)
+	}
+
+	// Rules see the whole output, not only what fits in --max-log-bytes.
+	middle := "seq 100; echo 'ERROR: lost'; seq 1000"
+	if err, _ := run("--name", "middle", "--max-log-bytes", "64", "--fail-if-match", "ERROR", "--", "sh", "-c", middle); err != nil {
+		t.Fatal(err)
+	}
+	if r := lastRun(t, dir, "middle"); r.Status != "failed" || !r.Truncated || strings.Contains(r.Stdout, "ERROR") || !strings.Contains(r.Reason, "ERROR: lost") {
+		t.Fatalf("truncated fail match = %+v", r)
+	}
+	if err, _ := run("--name", "marker", "--max-log-bytes", "64", "--success-if-match", "^Backup complete$", "--", "sh", "-c", "seq 100; echo 'Backup complete'; seq 1000"); err != nil {
+		t.Fatal(err)
+	}
+	if r := lastRun(t, dir, "marker"); r.Status != "success" || !r.Truncated {
+		t.Fatalf("truncated success match = %+v", r)
+	}
+	if err, _ := run("--name", "quiet", "--max-log-bytes", "0", "--fail-on-stderr", "--", "sh", "-c", "echo oops >&2"); err != nil {
+		t.Fatal(err)
+	}
+	if r := lastRun(t, dir, "quiet"); r.Status != "failed" || !strings.Contains(r.Reason, "oops") {
+		t.Fatalf("unkept stderr = %+v", r)
 	}
 
 	started := time.Now()
