@@ -16,6 +16,7 @@ type Entry struct {
 	Schedule string // 5-field expression; "" for @reboot
 	Raw      string // schedule as written, e.g. "@daily" or "*/5 * * * *"
 	Command  string // shell command, with cron's % handling applied
+	Text     string // the command as written, before cron's % handling
 }
 
 // Crontab is a parsed crontab.
@@ -71,7 +72,8 @@ func Parse(text string) Crontab {
 			raw = schedule
 			command = afterFields(line, 5)
 		}
-		c.Entries = append(c.Entries, Entry{Line: n, Schedule: schedule, Raw: raw, Command: cronPercent(strings.TrimSpace(command))})
+		command = strings.TrimSpace(command)
+		c.Entries = append(c.Entries, Entry{Line: n, Schedule: schedule, Raw: raw, Command: cronPercent(command), Text: command})
 	}
 	return c
 }
