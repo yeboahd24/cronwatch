@@ -159,6 +159,10 @@ func maintain(ctx context.Context, s *storage.Store, stderr io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("detect missed runs: %w", err)
 	}
+	// cronwatch doctor reports when missed runs were last checked.
+	if err := s.SetMaintained(ctx, time.Now()); err != nil {
+		return fmt.Errorf("record the missed-run check: %w", err)
+	}
 	return nil
 }
 

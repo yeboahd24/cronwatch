@@ -86,6 +86,8 @@ func dispatch(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		return checkCommand(ctx, args[1:], stdout)
 	case "ping":
 		return pingCommand(ctx, args[1:], stdout, stderr)
+	case "doctor":
+		return doctorCommand(ctx, args[1:], stdout)
 	case "pause", "resume", "archive":
 		return jobStateCommand(ctx, args[0], args[1:], stdout)
 	case "timers":
@@ -117,6 +119,7 @@ Usage:
   cronwatch digest [--since DURATION] [--quiet]
   cronwatch crontab-history [--limit N] [JOB-SLUG]
   cronwatch check [JOB-SLUG...]
+  cronwatch doctor
   cronwatch ping [--start | --fail] JOB-SLUG
   cronwatch timers [--all] [--json]
   cronwatch pause [--for DURATION] JOB-SLUG...

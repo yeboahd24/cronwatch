@@ -66,6 +66,11 @@ type Job struct {
 	ArchivedAt         sql.NullString
 }
 
+type Meta struct {
+	Key   string
+	Value string
+}
+
 type MissedOccurrence struct {
 	ID         string
 	JobID      string

@@ -80,6 +80,18 @@ func alertRetryDelay(attempts int) time.Duration {
 	return min(d, alertRetryMax)
 }
 
+// shortDuration formats d as a flag would take it: "1h" rather than "1h0m0s".
+func shortDuration(d time.Duration) string {
+	s := d.String()
+	if strings.HasSuffix(s, "m0s") {
+		s = strings.TrimSuffix(s, "0s")
+	}
+	if strings.HasSuffix(s, "h0m") {
+		s = strings.TrimSuffix(s, "0m")
+	}
+	return s
+}
+
 // hookName is the flag that sets a hook, for messages.
 func hookName(hook string) string {
 	if hook == "on_recover" {
@@ -153,7 +165,7 @@ func deliverAlert(ctx context.Context, s *storage.Store, a storage.PendingAlert,
 			status = storage.AlertPending
 			t := time.Now().Add(alertRetryDelay(attempt))
 			retryAt = &t
-			next = "retrying in " + strings.TrimSuffix(strings.TrimSuffix(alertRetryDelay(attempt).String(), "0s"), "0m")
+			next = "retrying in " + shortDuration(alertRetryDelay(attempt))
 		}
 		fmt.Fprintf(stderr, "cronwatch: %s hook for %s failed: %v (attempt %d of %d, %s)\n",
 			hookName(a.Hook), a.JobName, runErr, attempt, alertMaxAttempts, next)
