@@ -26,7 +26,8 @@ func checkCommand(ctx context.Context, args []string, stdout io.Writer) error {
 	fs := newFlagSet("check", "cronwatch check [flags] [JOB-SLUG...]",
 		"Print one status line for monitoring systems and exit like a Nagios plugin: 0 OK, 1 WARNING\n"+
 			"(a last run was unusually slow, or a job is getting slower), 2 CRITICAL (a job failed, timed\n"+
-			"out, missed a run or has an impossible schedule), 3 UNKNOWN. Checks every job unless given slugs.")
+			"out, missed a run or has an impossible schedule), 3 UNKNOWN. Checks every job unless given slugs.\n"+
+			"Paused and archived jobs are OK; archived jobs are left out unless named.")
 	dir := fs.String("data-dir", "", "data directory")
 	if err := parseFlags(fs, args, stdout); err != nil {
 		return err
@@ -55,7 +56,9 @@ func runCheck(ctx context.Context, dir string, slugs []string) (int, []string, e
 	if err != nil {
 		return 0, nil, err
 	}
-	if len(slugs) > 0 {
+	if len(slugs) == 0 {
+		views = model.Unarchived(views)
+	} else {
 		bySlug := map[string]model.JobView{}
 		for _, v := range views {
 			bySlug[v.Slug] = v
@@ -72,7 +75,12 @@ func runCheck(ctx context.Context, dir string, slugs []string) (int, []string, e
 	code := checkOK
 	var counts [3]int
 	var problems, details []string
+	paused := 0
 	for _, v := range views {
+		if v.Status == "paused" || v.Status == "archived" {
+			paused++ // not monitored, so neither OK nor a problem
+			continue
+		}
 		state, word, detail := checkOK, "", ""
 		switch {
 		case model.Failing(v.Status) || v.Status == "missed" || v.Status == "invalid_schedule":
@@ -102,7 +110,10 @@ func runCheck(ctx context.Context, dir string, slugs []string) (int, []string, e
 	if len(problems) > 0 {
 		summary = strings.Join(problems, ", ")
 	}
-	perf := fmt.Sprintf("jobs=%d critical=%d warning=%d ok=%d", len(views), counts[checkCritical], counts[checkWarning], counts[checkOK])
+	if paused > 0 {
+		summary += fmt.Sprintf(", %d paused or archived", paused)
+	}
+	perf := fmt.Sprintf("jobs=%d critical=%d warning=%d ok=%d paused=%d", len(views), counts[checkCritical], counts[checkWarning], counts[checkOK], paused)
 	return code, append([]string{fmt.Sprintf("CRONWATCH %s - %s | %s", checkLabels[code], summary, perf)}, details...), nil
 }
 

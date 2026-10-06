@@ -61,6 +61,9 @@ type Job struct {
 	OnRecover          sql.NullString
 	MaxDurationSeconds sql.NullInt64
 	InCrontab          int64
+	PausedAt           sql.NullString
+	PausedUntil        sql.NullString
+	ArchivedAt         sql.NullString
 }
 
 type MissedOccurrence struct {

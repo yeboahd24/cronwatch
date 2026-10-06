@@ -728,3 +728,58 @@ func TestAlertDeliveryIsShown(t *testing.T) {
 		}
 	}
 }
+
+func TestPausedAndArchivedJobs(t *testing.T) {
+	ctx := context.Background()
+	s, err := storage.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	expr := "0 3 * * *"
+	paused, err := s.UpsertJob(ctx, storage.JobSpec{Slug: "paused", Name: "Paused job", Command: `"true"`, Schedule: &expr})
+	if err != nil {
+		t.Fatal(err)
+	}
+	archived, err := s.UpsertJob(ctx, storage.JobSpec{Slug: "old", Name: "Old job", Command: `"true"`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	until := now.Add(2 * time.Hour)
+	if err := s.PauseJob(ctx, paused, now, &until); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ArchiveJob(ctx, archived, now); err != nil {
+		t.Fatal(err)
+	}
+	server, err := New(s, Options{Metrics: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	get := func(path string) string {
+		recorder := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Host = "localhost:8765"
+		server.Router.ServeHTTP(recorder, req)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("%s: status %d", path, recorder.Code)
+		}
+		return recorder.Body.String()
+	}
+	index := get("/")
+	if !strings.Contains(index, `<span class="status status-paused">Paused</span><small>until <time`) ||
+		!strings.Contains(index, `<p class="archived-jobs">Archived: <a href="/jobs/`+archived.ID+`">Old job</a></p>`) ||
+		strings.Contains(index, `<td data-label="Job" class="cell-job"><a href="/jobs/`+archived.ID) {
+		t.Fatalf("index:\n%s", index)
+	}
+	if page := get("/jobs/" + paused.ID); !strings.Contains(page, `<span class="error-label">Paused</span>`) || !strings.Contains(page, "<code>cronwatch resume paused</code>") {
+		t.Fatalf("paused job page:\n%s", page)
+	}
+	if page := get("/jobs/" + archived.ID); !strings.Contains(page, `<span class="error-label">Archived</span>`) {
+		t.Fatalf("archived job page:\n%s", page)
+	}
+	if metrics := get("/metrics"); strings.Contains(metrics, `job="old"`) || !strings.Contains(metrics, `status="paused"`) {
+		t.Fatalf("metrics:\n%s", metrics)
+	}
+}

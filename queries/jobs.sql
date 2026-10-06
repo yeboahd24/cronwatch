@@ -37,3 +37,15 @@ SELECT * FROM jobs WHERE in_crontab = 1 ORDER BY slug;
 UPDATE jobs SET in_crontab = 0, schedule = NULL, updated_at = ?,
     missed_checked_until = CASE WHEN schedule IS NULL THEN missed_checked_until ELSE ? END
 WHERE id = ?;
+
+-- name: PauseJob :exec
+UPDATE jobs SET paused_at = ?, paused_until = ?, updated_at = ? WHERE id = ?;
+
+-- name: ArchiveJob :exec
+UPDATE jobs SET archived_at = ?, paused_at = NULL, paused_until = NULL, updated_at = ? WHERE id = ?;
+
+-- name: ResumeJob :exec
+-- Missed runs are checked from now, not from before the pause.
+UPDATE jobs SET paused_at = NULL, paused_until = NULL, archived_at = NULL,
+    missed_checked_until = ?, updated_at = ?
+WHERE id = ?;

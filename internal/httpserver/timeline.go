@@ -88,6 +88,7 @@ func (s *Server) handleTimeline(w http.ResponseWriter, r *http.Request) {
 		queryError(w, err)
 		return
 	}
+	jobs = model.Unarchived(jobs)
 	runs, err := s.Store.RunsOverlapping(r.Context(), from, to)
 	if err != nil {
 		queryError(w, err)

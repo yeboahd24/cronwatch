@@ -35,8 +35,9 @@ func openForList(ctx context.Context, dir string) (*storage.Store, error) {
 }
 
 func jobsCommand(ctx context.Context, args []string, stdout io.Writer) error {
-	fs := newFlagSet("jobs", "cronwatch jobs [flags]", "List every job with its current status.")
+	fs := newFlagSet("jobs", "cronwatch jobs [flags]", "List every job with its current status. Archived jobs are listed with --all.")
 	dir := fs.String("data-dir", "", "data directory")
+	all := fs.Bool("all", false, "include archived jobs")
 	asJSON := fs.Bool("json", false, "print a JSON array instead of a table")
 	if err := parseFlags(fs, args, stdout); err != nil {
 		return err
@@ -52,6 +53,9 @@ func jobsCommand(ctx context.Context, args []string, stdout io.Writer) error {
 	views, err := s.ListJobViews(ctx, time.Now())
 	if err != nil {
 		return err
+	}
+	if !*all {
+		views = model.Unarchived(views)
 	}
 	if *asJSON {
 		out := make([]jsonJob, 0, len(views))
@@ -70,7 +74,11 @@ func jobsCommand(ctx context.Context, args []string, stdout io.Writer) error {
 				duration = (time.Duration(*v.LastRun.DurationMS) * time.Millisecond).String()
 			}
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", v.Name, v.Status, last, duration)
+		status := v.Status
+		if status == "paused" && v.PausedUntil != nil {
+			status += " until " + v.PausedUntil.Local().Format("2006-01-02 15:04")
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", v.Name, status, last, duration)
 	}
 	return w.Flush()
 }

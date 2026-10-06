@@ -54,7 +54,7 @@ func (s *Store) DetectMissedJobs(ctx context.Context, now time.Time) ([]NewlyMis
 }
 
 func (s *Store) detectMissedForJob(ctx context.Context, j model.Job, now time.Time) ([]time.Time, error) {
-	if j.Schedule == nil {
+	if j.Schedule == nil || !j.Monitored(now) {
 		return nil, nil
 	}
 	sched, err := schedule.Parse(*j.Schedule)
@@ -64,6 +64,10 @@ func (s *Store) detectMissedForJob(ctx context.Context, j model.Job, now time.Ti
 	from := j.CreatedAt
 	if j.MissedCheckedUntil != nil && j.MissedCheckedUntil.After(from) {
 		from = *j.MissedCheckedUntil
+	}
+	// Occurrences during a pause that has run out were not expected.
+	if j.PausedUntil != nil && j.PausedUntil.After(from) {
+		from = *j.PausedUntil
 	}
 	deadline := now.Add(-time.Duration(j.GraceSeconds) * time.Second)
 	occurrence := sched.Next(from.In(time.Local))

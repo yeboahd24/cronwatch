@@ -29,6 +29,7 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		queryError(w, err)
 		return
 	}
+	views = model.Unarchived(views)
 	families := []*metric{
 		{name: "cronwatch_job_info", help: "Always 1; labels carry the job's name, schedule and status."},
 		{name: "cronwatch_job_failing", help: "1 if the job's last run failed or timed out."},

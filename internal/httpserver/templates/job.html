@@ -5,6 +5,8 @@
   <div><h1>{{.View.Name}}</h1><p class="subtitle">{{.View.Slug}}</p></div>
   {{template "status" .View.Status}}
 </div>
+{{if eq .View.Status "archived"}}<div class="error-callout is-muted" role="note"><span class="error-label">Archived</span><span>{{template "time" .View.ArchivedAt}}. Not checked for missed runs and raises no alerts; its runs are kept. <code>cronwatch resume {{.View.Slug}}</code> monitors it again.</span></div>
+{{else if eq .View.Status "paused"}}<div class="error-callout is-muted" role="note"><span class="error-label">Paused</span><span>{{template "time" .View.PausedAt}}{{if .View.PausedUntil}} until {{template "time" .View.PausedUntil}}{{end}}. Not checked for missed runs and raises no alerts; runs are still recorded. <code>cronwatch resume {{.View.Slug}}</code> monitors it again.</span></div>{{end}}
 <section class="panel details">
   <dl>
     <dt>Command</dt><dd><code class="command">{{shell .View.Command}}</code></dd>

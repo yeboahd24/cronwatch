@@ -24,7 +24,7 @@ func TestCheck(t *testing.T) {
 		}
 		return 0, out.String()
 	}
-	if code, out := check(); code != 0 || out != "CRONWATCH OK - 0 jobs ok | jobs=0 critical=0 warning=0 ok=0\n" {
+	if code, out := check(); code != 0 || out != "CRONWATCH OK - 0 jobs ok | jobs=0 critical=0 warning=0 ok=0 paused=0\n" {
 		t.Fatalf("empty: %d %q", code, out)
 	}
 	_ = Run(ctx, []string{"run", "--name", "Good", "--data-dir", dir, "--", "true"}, &bytes.Buffer{}, &bytes.Buffer{})
@@ -33,7 +33,7 @@ func TestCheck(t *testing.T) {
 	}
 	_ = Run(ctx, []string{"run", "--name", "Bad", "--data-dir", dir, "--", "sh", "-c", "echo 'disk full' >&2; exit 1"}, &bytes.Buffer{}, &bytes.Buffer{})
 	code, out := check()
-	if code != 2 || !strings.HasPrefix(out, "CRONWATCH CRITICAL - Bad failed | jobs=2 critical=1 warning=0 ok=1\nCRITICAL: Bad: failed ") ||
+	if code != 2 || !strings.HasPrefix(out, "CRONWATCH CRITICAL - Bad failed | jobs=2 critical=1 warning=0 ok=1 paused=0\nCRITICAL: Bad: failed ") ||
 		!strings.Contains(out, ": disk full\n") {
 		t.Fatalf("one failing job: %d %q", code, out)
 	}
