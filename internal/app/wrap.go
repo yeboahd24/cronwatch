@@ -340,10 +340,11 @@ func replaceCrontab(ctx context.Context, s *storage.Store, target crontabTarget,
 	if err := target.write(ctx, text); err != nil {
 		return backup, syncResult{}, err
 	}
-	result, err := syncCrontab(ctx, s, text)
-	if err == nil && target.file == "" {
-		result.Changes, err = recordCrontab(ctx, s, text, time.Now())
+	sync := syncCrontab
+	if target.file == "" {
+		sync = syncUserCrontab
 	}
+	result, err := sync(ctx, s, text)
 	return backup, result, err
 }
 

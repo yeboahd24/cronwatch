@@ -43,9 +43,13 @@ func readUserCrontab(ctx context.Context) (string, error) {
 type syncResult struct {
 	Jobs           int                     // cronwatch run lines registered (new, updated or unchanged)
 	Added, Updated []string                // job names
+	Slugs          []string                // of the jobs registered
 	Unmonitored    []crontab.Entry         // lines that do not use cronwatch
 	Problems       []string                // lines that use cronwatch run but could not be read
 	Changes        []storage.CrontabChange // since the last recorded crontab
+	// Unscheduled names the jobs whose schedule was removed because their
+	// line left the user's crontab.
+	Unscheduled []string
 }
 
 // shellEnv is the environment used to expand $VAR in crontab commands: the
@@ -119,6 +123,7 @@ func syncCrontab(ctx context.Context, s *storage.Store, text string) (syncResult
 			spec.Schedule = &expr
 		}
 		result.Jobs++
+		result.Slugs = append(result.Slugs, spec.Slug)
 
 		existing, err := s.GetJobBySlug(ctx, spec.Slug)
 		switch {
@@ -153,6 +158,25 @@ func syncCrontab(ctx context.Context, s *storage.Store, text string) (syncResult
 		result.Updated = append(result.Updated, existing.Name)
 	}
 	return result, nil
+}
+
+// syncUserCrontab is syncCrontab for the user's crontab, which also says
+// which jobs cron runs: jobs whose lines have left it lose their schedule, so
+// they are not reported as missed, and the crontab's history is recorded.
+// While a cronwatch line cannot be read, no schedule is removed, since that
+// line may be the job's.
+func syncUserCrontab(ctx context.Context, s *storage.Store, text string) (syncResult, error) {
+	result, err := syncCrontab(ctx, s, text)
+	if err != nil {
+		return result, err
+	}
+	if len(result.Problems) == 0 {
+		if result.Unscheduled, err = s.SyncJobsInCrontab(ctx, result.Slugs, time.Now()); err != nil {
+			return result, err
+		}
+	}
+	result.Changes, err = recordCrontab(ctx, s, text, time.Now())
+	return result, err
 }
 
 func syncCommand(ctx context.Context, args []string, stdout io.Writer) error {
@@ -270,15 +294,14 @@ func syncCommand(ctx context.Context, args []string, stdout io.Writer) error {
 		return nil
 	}
 
-	result, err := syncCrontab(ctx, s, text)
+	// Only your real crontab says which jobs cron runs; a file may be a draft.
+	sync := syncCrontab
+	if *file == "" {
+		sync = syncUserCrontab
+	}
+	result, err := sync(ctx, s, text)
 	if err != nil {
 		return err
-	}
-	// Only your real crontab has a history; a file may be a draft.
-	if *file == "" {
-		if result.Changes, err = recordCrontab(ctx, s, text, time.Now()); err != nil {
-			return err
-		}
 	}
 	if *asJSON {
 		return writeJSON(stdout, newJSONSync(result))
@@ -304,7 +327,10 @@ func printSyncResult(w io.Writer, r syncResult) {
 	for _, name := range r.Updated {
 		fmt.Fprintf(w, "Updated  %s\n", name)
 	}
-	if len(r.Added)+len(r.Updated) > 0 {
+	for _, name := range r.Unscheduled {
+		fmt.Fprintf(w, "Unscheduled  %s (no longer in the crontab)\n", name)
+	}
+	if len(r.Added)+len(r.Updated)+len(r.Unscheduled) > 0 {
 		fmt.Fprintln(w)
 	}
 
