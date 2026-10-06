@@ -537,9 +537,10 @@ How a line is wrapped:
 `--restore latest` (or a name from the list) puts one back, after backing up
 the crontab it replaces. Each crontab has its own backups, so a backup of a
 `--crontab FILE` is never restored as your crontab. Backups are exact copies
-and may hold secrets; they are readable only by you. Restoring does not delete
-the jobs that wrapping registered; they stay on the dashboard, and if they
-have a schedule they are reported as missed.
+and may hold secrets; they are readable only by you. Restoring your crontab
+unschedules the jobs that wrapping registered, as for any line removed from it
+(see [crontab sync](#crontab-sync)); they stay on the dashboard with their
+runs.
 
 ### `cronwatch envdiff`
 
@@ -794,6 +795,15 @@ appear on the dashboard as **Never run**, with their next expected time,
 before their first run. A line without `--schedule` uses its own cron
 schedule. Sync never deletes jobs, and it only corrects the schedule, grace
 period and hooks of existing jobs; names and commands come from real runs.
+
+When a job's line leaves your crontab, sync removes the job's schedule, so it
+is no longer reported as missed. Its runs and history stay, and the dashboard
+lists it without a schedule. If the line comes back, so does the schedule.
+This only applies to jobs your crontab ran: a job scheduled with
+`cronwatch run --schedule` or `ping --schedule` is left alone, and so is
+everything when `sync --crontab FILE` reads a draft. While sync reports a
+cronwatch line it cannot read, it removes no schedules, because that line may
+be the job's.
 Hooks come from the line's flags, or else from `CRONWATCH_ON_FAILURE` and
 `CRONWATCH_ON_RECOVER` in the crontab; removing those removes the hooks.
 

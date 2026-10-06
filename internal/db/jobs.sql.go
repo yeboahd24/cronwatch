@@ -11,7 +11,7 @@ import (
 )
 
 const getJob = `-- name: GetJob :one
-SELECT id, slug, name, command, schedule, grace_seconds, created_at, updated_at, missed_checked_until, on_failure, on_recover, max_duration_seconds FROM jobs WHERE id = ?
+SELECT id, slug, name, command, schedule, grace_seconds, created_at, updated_at, missed_checked_until, on_failure, on_recover, max_duration_seconds, in_crontab FROM jobs WHERE id = ?
 `
 
 func (q *Queries) GetJob(ctx context.Context, id string) (Job, error) {
@@ -30,12 +30,13 @@ func (q *Queries) GetJob(ctx context.Context, id string) (Job, error) {
 		&i.OnFailure,
 		&i.OnRecover,
 		&i.MaxDurationSeconds,
+		&i.InCrontab,
 	)
 	return i, err
 }
 
 const getJobBySlug = `-- name: GetJobBySlug :one
-SELECT id, slug, name, command, schedule, grace_seconds, created_at, updated_at, missed_checked_until, on_failure, on_recover, max_duration_seconds FROM jobs WHERE slug = ?
+SELECT id, slug, name, command, schedule, grace_seconds, created_at, updated_at, missed_checked_until, on_failure, on_recover, max_duration_seconds, in_crontab FROM jobs WHERE slug = ?
 `
 
 func (q *Queries) GetJobBySlug(ctx context.Context, slug string) (Job, error) {
@@ -54,12 +55,13 @@ func (q *Queries) GetJobBySlug(ctx context.Context, slug string) (Job, error) {
 		&i.OnFailure,
 		&i.OnRecover,
 		&i.MaxDurationSeconds,
+		&i.InCrontab,
 	)
 	return i, err
 }
 
 const listJobs = `-- name: ListJobs :many
-SELECT id, slug, name, command, schedule, grace_seconds, created_at, updated_at, missed_checked_until, on_failure, on_recover, max_duration_seconds FROM jobs ORDER BY name COLLATE NOCASE
+SELECT id, slug, name, command, schedule, grace_seconds, created_at, updated_at, missed_checked_until, on_failure, on_recover, max_duration_seconds, in_crontab FROM jobs ORDER BY name COLLATE NOCASE
 `
 
 func (q *Queries) ListJobs(ctx context.Context) ([]Job, error) {
@@ -84,6 +86,7 @@ func (q *Queries) ListJobs(ctx context.Context) ([]Job, error) {
 			&i.OnFailure,
 			&i.OnRecover,
 			&i.MaxDurationSeconds,
+			&i.InCrontab,
 		); err != nil {
 			return nil, err
 		}
@@ -96,6 +99,74 @@ func (q *Queries) ListJobs(ctx context.Context) ([]Job, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const listJobsInCrontab = `-- name: ListJobsInCrontab :many
+SELECT id, slug, name, command, schedule, grace_seconds, created_at, updated_at, missed_checked_until, on_failure, on_recover, max_duration_seconds, in_crontab FROM jobs WHERE in_crontab = 1 ORDER BY slug
+`
+
+func (q *Queries) ListJobsInCrontab(ctx context.Context) ([]Job, error) {
+	rows, err := q.db.QueryContext(ctx, listJobsInCrontab)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Job
+	for rows.Next() {
+		var i Job
+		if err := rows.Scan(
+			&i.ID,
+			&i.Slug,
+			&i.Name,
+			&i.Command,
+			&i.Schedule,
+			&i.GraceSeconds,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.MissedCheckedUntil,
+			&i.OnFailure,
+			&i.OnRecover,
+			&i.MaxDurationSeconds,
+			&i.InCrontab,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const markJobInCrontab = `-- name: MarkJobInCrontab :exec
+UPDATE jobs SET in_crontab = 1 WHERE slug = ?
+`
+
+func (q *Queries) MarkJobInCrontab(ctx context.Context, slug string) error {
+	_, err := q.db.ExecContext(ctx, markJobInCrontab, slug)
+	return err
+}
+
+const removeJobFromCrontab = `-- name: RemoveJobFromCrontab :exec
+UPDATE jobs SET in_crontab = 0, schedule = NULL, updated_at = ?,
+    missed_checked_until = CASE WHEN schedule IS NULL THEN missed_checked_until ELSE ? END
+WHERE id = ?
+`
+
+type RemoveJobFromCrontabParams struct {
+	UpdatedAt          string
+	MissedCheckedUntil sql.NullString
+	ID                 string
+}
+
+// The job's line left the crontab: it is no longer expected on a schedule.
+func (q *Queries) RemoveJobFromCrontab(ctx context.Context, arg RemoveJobFromCrontabParams) error {
+	_, err := q.db.ExecContext(ctx, removeJobFromCrontab, arg.UpdatedAt, arg.MissedCheckedUntil, arg.ID)
+	return err
 }
 
 const setMissedCheckedUntil = `-- name: SetMissedCheckedUntil :exec

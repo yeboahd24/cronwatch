@@ -25,3 +25,15 @@ SELECT * FROM jobs ORDER BY name COLLATE NOCASE;
 
 -- name: SetMissedCheckedUntil :exec
 UPDATE jobs SET missed_checked_until = ? WHERE id = ?;
+
+-- name: MarkJobInCrontab :exec
+UPDATE jobs SET in_crontab = 1 WHERE slug = ?;
+
+-- name: ListJobsInCrontab :many
+SELECT * FROM jobs WHERE in_crontab = 1 ORDER BY slug;
+
+-- name: RemoveJobFromCrontab :exec
+-- The job's line left the crontab: it is no longer expected on a schedule.
+UPDATE jobs SET in_crontab = 0, schedule = NULL, updated_at = ?,
+    missed_checked_until = CASE WHEN schedule IS NULL THEN missed_checked_until ELSE ? END
+WHERE id = ?;

@@ -121,3 +121,41 @@ func (s *Store) JobCrontabChangesSince(ctx context.Context, t time.Time) (map[st
 	}
 	return out, nil
 }
+
+// SyncJobsInCrontab records that the user's crontab runs the jobs with the
+// given slugs, and removes the schedule of every job it ran at its last sync
+// but no longer does, so those jobs are not reported as missed. It returns
+// the names of the jobs whose schedule it removed.
+func (s *Store) SyncJobsInCrontab(ctx context.Context, slugs []string, now time.Time) ([]string, error) {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	q := db.New(tx)
+	present := map[string]bool{}
+	for _, slug := range slugs {
+		present[slug] = true
+		if err := q.MarkJobInCrontab(ctx, slug); err != nil {
+			return nil, err
+		}
+	}
+	jobs, err := q.ListJobsInCrontab(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var unscheduled []string
+	for _, j := range jobs {
+		if present[j.Slug] {
+			continue
+		}
+		at := timestamp(now)
+		if err := q.RemoveJobFromCrontab(ctx, db.RemoveJobFromCrontabParams{ID: j.ID, UpdatedAt: at, MissedCheckedUntil: sql.NullString{String: at, Valid: true}}); err != nil {
+			return nil, err
+		}
+		if j.Schedule.Valid {
+			unscheduled = append(unscheduled, j.Name)
+		}
+	}
+	return unscheduled, tx.Commit()
+}

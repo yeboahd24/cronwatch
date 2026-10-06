@@ -70,6 +70,7 @@ type jsonSync struct {
 	Jobs        int               `json:"jobs"`
 	Added       []string          `json:"added"`
 	Updated     []string          `json:"updated"`
+	Unscheduled []string          `json:"unscheduled"`
 	Problems    []string          `json:"problems"`
 	Unmonitored []jsonCrontabLine `json:"unmonitored"`
 	Changes     []jsonChange      `json:"crontab_changes"`
@@ -89,7 +90,7 @@ type jsonCrontabLine struct {
 }
 
 func newJSONSync(r syncResult) jsonSync {
-	out := jsonSync{Jobs: r.Jobs, Added: nonNil(r.Added), Updated: nonNil(r.Updated), Problems: nonNil(r.Problems),
+	out := jsonSync{Jobs: r.Jobs, Added: nonNil(r.Added), Updated: nonNil(r.Updated), Unscheduled: nonNil(r.Unscheduled), Problems: nonNil(r.Problems),
 		Unmonitored: []jsonCrontabLine{}, Changes: []jsonChange{}}
 	for _, c := range r.Changes {
 		out.Changes = append(out.Changes, jsonChange{JobSlug: c.JobSlug, Kind: c.Kind, Before: c.Before, After: c.After})
