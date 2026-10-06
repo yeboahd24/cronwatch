@@ -3,13 +3,10 @@ package storage
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/yeboahd24/cronwatch/internal/db"
-	"github.com/yeboahd24/cronwatch/internal/logs"
 	"github.com/yeboahd24/cronwatch/internal/model"
 )
 
@@ -40,10 +37,16 @@ func (s *Store) OpenHeartbeatRun(ctx context.Context, jobID string) (model.Run, 
 	return convertRun(row)
 }
 
-// ExpireHeartbeatRuns records as timed out the heartbeat runs, of the job
-// with jobID or of every job if jobID is "", that have waited longer than
-// their job's --max-duration for an end ping. It returns the runs it ended.
-func (s *Store) ExpireHeartbeatRuns(ctx context.Context, jobID string, now time.Time) ([]model.Run, error) {
+// OverdueRun is a heartbeat run that has waited longer than its job's
+// --max-duration for an end ping.
+type OverdueRun struct {
+	Run   model.Run
+	Limit time.Duration
+}
+
+// OverdueHeartbeatRuns returns the overdue heartbeat runs of the job with
+// jobID, or of every job if jobID is "".
+func (s *Store) OverdueHeartbeatRuns(ctx context.Context, jobID string, now time.Time) ([]OverdueRun, error) {
 	var filter any
 	if jobID != "" {
 		filter = jobID
@@ -52,28 +55,16 @@ func (s *Store) ExpireHeartbeatRuns(ctx context.Context, jobID string, now time.
 	if err != nil {
 		return nil, err
 	}
-	var expired []model.Run
+	var out []OverdueRun
 	for _, row := range rows {
 		run, err := convertRun(row.Run)
 		if err != nil {
-			return expired, err
+			return out, err
 		}
 		limit := time.Duration(row.MaxDurationSeconds.Int64) * time.Second
-		if now.Sub(run.StartedAt) <= limit {
-			continue
+		if now.Sub(run.StartedAt) > limit {
+			out = append(out, OverdueRun{Run: run, Limit: limit})
 		}
-		// "2h" rather than "2h0m0s", as it would be passed to the flag.
-		within := strings.TrimSuffix(strings.TrimSuffix(limit.String(), "0s"), "0m")
-		note := fmt.Sprintf("cronwatch: no end ping within %s (--max-duration)\n", within)
-		err = s.CompleteRun(ctx, run.ID, Completion{Ended: now, Duration: now.Sub(run.StartedAt), Status: "timeout",
-			Stderr: note, Combined: string(logs.StderrMark) + note, Reason: fmt.Sprintf("no end ping within %s (--max-duration)", within)})
-		if err != nil {
-			continue // ended concurrently by its end ping or another process
-		}
-		if run, err = s.GetRun(ctx, run.ID); err != nil {
-			return expired, err
-		}
-		expired = append(expired, run)
 	}
-	return expired, nil
+	return out, nil
 }

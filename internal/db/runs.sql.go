@@ -590,6 +590,140 @@ func (q *Queries) ListRunStartsSince(ctx context.Context, arg ListRunStartsSince
 	return items, nil
 }
 
+const listRunSummariesForJob = `-- name: ListRunSummariesForJob :many
+SELECT id, job_id, started_at, ended_at, duration_ms, status, exit_code, truncated, created_at, pid, host, env_hash, reason, overlapped_run_id, max_rss_kb, user_cpu_ms, sys_cpu_ms, failure_signature, output_at FROM run_summaries WHERE job_id = ? ORDER BY started_at DESC LIMIT ?
+`
+
+type ListRunSummariesForJobParams struct {
+	JobID string
+	Limit int64
+}
+
+func (q *Queries) ListRunSummariesForJob(ctx context.Context, arg ListRunSummariesForJobParams) ([]RunSummary, error) {
+	rows, err := q.db.QueryContext(ctx, listRunSummariesForJob, arg.JobID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RunSummary
+	for rows.Next() {
+		var i RunSummary
+		if err := rows.Scan(
+			&i.ID,
+			&i.JobID,
+			&i.StartedAt,
+			&i.EndedAt,
+			&i.DurationMs,
+			&i.Status,
+			&i.ExitCode,
+			&i.Truncated,
+			&i.CreatedAt,
+			&i.Pid,
+			&i.Host,
+			&i.EnvHash,
+			&i.Reason,
+			&i.OverlappedRunID,
+			&i.MaxRssKb,
+			&i.UserCpuMs,
+			&i.SysCpuMs,
+			&i.FailureSignature,
+			&i.OutputAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRunSummariesPage = `-- name: ListRunSummariesPage :many
+SELECT run_summaries.id, run_summaries.job_id, run_summaries.started_at, run_summaries.ended_at, run_summaries.duration_ms, run_summaries.status, run_summaries.exit_code, run_summaries.truncated, run_summaries.created_at, run_summaries.pid, run_summaries.host, run_summaries.env_hash, run_summaries.reason, run_summaries.overlapped_run_id, run_summaries.max_rss_kb, run_summaries.user_cpu_ms, run_summaries.sys_cpu_ms, run_summaries.failure_signature, run_summaries.output_at, jobs.name AS job_name
+FROM run_summaries JOIN jobs ON jobs.id = run_summaries.job_id
+WHERE (?1 IS NULL OR run_summaries.job_id = ?1)
+  AND (?2 IS NULL OR run_summaries.status = ?2)
+  AND (?3 IS NULL OR run_summaries.started_at >= ?3)
+  AND (?4 IS NULL OR run_summaries.started_at < ?4)
+  AND (?5 IS NULL OR run_summaries.started_at < ?5
+       OR (run_summaries.started_at = ?5 AND run_summaries.id < ?6))
+ORDER BY run_summaries.started_at DESC, run_summaries.id DESC LIMIT ?7
+`
+
+type ListRunSummariesPageParams struct {
+	JobID      interface{}
+	Status     interface{}
+	Since      interface{}
+	Until      interface{}
+	BeforeTime interface{}
+	BeforeID   sql.NullString
+	RowLimit   int64
+}
+
+type ListRunSummariesPageRow struct {
+	RunSummary RunSummary
+	JobName    string
+}
+
+// Runs without output, newest first, optionally of one job, with one
+// status, or started in [since, until). A page continues after the run
+// (before_time, before_id), so runs recorded meanwhile do not shift it.
+func (q *Queries) ListRunSummariesPage(ctx context.Context, arg ListRunSummariesPageParams) ([]ListRunSummariesPageRow, error) {
+	rows, err := q.db.QueryContext(ctx, listRunSummariesPage,
+		arg.JobID,
+		arg.Status,
+		arg.Since,
+		arg.Until,
+		arg.BeforeTime,
+		arg.BeforeID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRunSummariesPageRow
+	for rows.Next() {
+		var i ListRunSummariesPageRow
+		if err := rows.Scan(
+			&i.RunSummary.ID,
+			&i.RunSummary.JobID,
+			&i.RunSummary.StartedAt,
+			&i.RunSummary.EndedAt,
+			&i.RunSummary.DurationMs,
+			&i.RunSummary.Status,
+			&i.RunSummary.ExitCode,
+			&i.RunSummary.Truncated,
+			&i.RunSummary.CreatedAt,
+			&i.RunSummary.Pid,
+			&i.RunSummary.Host,
+			&i.RunSummary.EnvHash,
+			&i.RunSummary.Reason,
+			&i.RunSummary.OverlappedRunID,
+			&i.RunSummary.MaxRssKb,
+			&i.RunSummary.UserCpuMs,
+			&i.RunSummary.SysCpuMs,
+			&i.RunSummary.FailureSignature,
+			&i.RunSummary.OutputAt,
+			&i.JobName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRunningRuns = `-- name: ListRunningRuns :many
 SELECT id, job_id, started_at, ended_at, duration_ms, status, exit_code, stdout, stderr, combined_log, truncated, created_at, pid, host, env_hash, reason, overlapped_run_id, max_rss_kb, user_cpu_ms, sys_cpu_ms, failure_signature, output_at FROM runs WHERE status = 'running'
 `
@@ -739,91 +873,6 @@ func (q *Queries) ListRunsOverlapping(ctx context.Context, arg ListRunsOverlappi
 			&i.ExitCode,
 			&i.Reason,
 			&i.OverlappedRunID,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listRunsPage = `-- name: ListRunsPage :many
-SELECT runs.id, runs.job_id, runs.started_at, runs.ended_at, runs.duration_ms, runs.status, runs.exit_code, runs.stdout, runs.stderr, runs.combined_log, runs.truncated, runs.created_at, runs.pid, runs.host, runs.env_hash, runs.reason, runs.overlapped_run_id, runs.max_rss_kb, runs.user_cpu_ms, runs.sys_cpu_ms, runs.failure_signature, runs.output_at, jobs.name AS job_name
-FROM runs JOIN jobs ON jobs.id = runs.job_id
-WHERE (?1 IS NULL OR runs.job_id = ?1)
-  AND (?2 IS NULL OR runs.status = ?2)
-  AND (?3 IS NULL OR runs.started_at >= ?3)
-  AND (?4 IS NULL OR runs.started_at < ?4)
-  AND (?5 IS NULL OR runs.started_at < ?5
-       OR (runs.started_at = ?5 AND runs.id < ?6))
-ORDER BY runs.started_at DESC, runs.id DESC LIMIT ?7
-`
-
-type ListRunsPageParams struct {
-	JobID      interface{}
-	Status     interface{}
-	Since      interface{}
-	Until      interface{}
-	BeforeTime interface{}
-	BeforeID   sql.NullString
-	RowLimit   int64
-}
-
-type ListRunsPageRow struct {
-	Run     Run
-	JobName string
-}
-
-// Runs newest first, optionally of one job, with one status, or started in
-// [since, until). A page continues after the run (before_time, before_id),
-// so runs recorded meanwhile do not shift it.
-func (q *Queries) ListRunsPage(ctx context.Context, arg ListRunsPageParams) ([]ListRunsPageRow, error) {
-	rows, err := q.db.QueryContext(ctx, listRunsPage,
-		arg.JobID,
-		arg.Status,
-		arg.Since,
-		arg.Until,
-		arg.BeforeTime,
-		arg.BeforeID,
-		arg.RowLimit,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListRunsPageRow
-	for rows.Next() {
-		var i ListRunsPageRow
-		if err := rows.Scan(
-			&i.Run.ID,
-			&i.Run.JobID,
-			&i.Run.StartedAt,
-			&i.Run.EndedAt,
-			&i.Run.DurationMs,
-			&i.Run.Status,
-			&i.Run.ExitCode,
-			&i.Run.Stdout,
-			&i.Run.Stderr,
-			&i.Run.CombinedLog,
-			&i.Run.Truncated,
-			&i.Run.CreatedAt,
-			&i.Run.Pid,
-			&i.Run.Host,
-			&i.Run.EnvHash,
-			&i.Run.Reason,
-			&i.Run.OverlappedRunID,
-			&i.Run.MaxRssKb,
-			&i.Run.UserCpuMs,
-			&i.Run.SysCpuMs,
-			&i.Run.FailureSignature,
-			&i.Run.OutputAt,
-			&i.JobName,
 		); err != nil {
 			return nil, err
 		}
@@ -1044,7 +1093,7 @@ type SearchRunLogsRow struct {
 }
 
 // Finished runs whose output contains query, ignoring ASCII case, filtered
-// like ListRunsPage and paged the same way.
+// like ListRunSummariesPage and paged the same way.
 func (q *Queries) SearchRunLogs(ctx context.Context, arg SearchRunLogsParams) ([]SearchRunLogsRow, error) {
 	rows, err := q.db.QueryContext(ctx, searchRunLogs,
 		arg.Query,

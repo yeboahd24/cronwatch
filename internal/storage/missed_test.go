@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"reflect"
 	"testing"
 	"time"
 
@@ -188,5 +189,43 @@ func TestPruneKeepsPendingAlerts(t *testing.T) {
 	}
 	if result.Alerts != 1 || len(left) != 1 || left[0].Status != AlertPending {
 		t.Fatalf("prune %+v left %+v", result, left)
+	}
+}
+
+func TestRunSummariesLeaveOutOutput(t *testing.T) {
+	ctx := context.Background()
+	s := openTest(t)
+	job, err := s.UpsertJob(ctx, testSpec("big", "", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := s.CreateRun(ctx, job.ID, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := 3
+	if err := s.CompleteRun(ctx, run.ID, Completion{Ended: time.Now(), Duration: time.Second, Status: "failed", ExitCode: &code,
+		Stdout: "out\n", Stderr: "err\n", Combined: "out\n\x02err\n", Truncated: true, Reason: "why"}); err != nil {
+		t.Fatal(err)
+	}
+	full, err := s.GetRun(ctx, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byJob, err := s.RunSummariesForJob(ctx, job.ID, 10)
+	if err != nil || len(byJob) != 1 {
+		t.Fatalf("summaries = %v, %v", byJob, err)
+	}
+	paged, err := s.ListRunSummaries(ctx, RunFilter{}, nil, 10)
+	if err != nil || len(paged) != 1 {
+		t.Fatalf("page = %v, %v", paged, err)
+	}
+	// A summary is the run without its output.
+	want := full
+	want.Stdout, want.Stderr, want.CombinedLog = "", "", ""
+	for _, got := range []model.Run{byJob[0], paged[0].Run} {
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("summary = %+v\nwant      %+v", got, want)
+		}
 	}
 }

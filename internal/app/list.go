@@ -135,7 +135,7 @@ func runsCommand(ctx context.Context, args []string, stdout io.Writer) error {
 	if rows == 0 {
 		rows = -1 // SQLite: no limit
 	}
-	items, err := s.ListRunsPage(ctx, filter, nil, rows)
+	items, err := s.ListRunSummaries(ctx, filter, nil, rows)
 	if err != nil {
 		return err
 	}

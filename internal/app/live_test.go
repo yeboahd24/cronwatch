@@ -60,10 +60,11 @@ func TestOutputIsSavedWhileRunning(t *testing.T) {
 	}
 }
 
-func TestAbandonedRunKeepsSavedOutput(t *testing.T) {
+func TestAbandonedRunKeepsSavedOutputAndAlerts(t *testing.T) {
 	ctx := context.Background()
 	s := openStore(t, t.TempDir())
-	if err := Run(ctx, []string{"run", "--data-dir", s.DataDir, "--name", "Job", "--", "true"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	hook, events := hookLog(t)
+	if err := Run(ctx, []string{"run", "--data-dir", s.DataDir, "--name", "Job", "--on-failure", hook, "--", "true"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
 	job, err := s.GetJobBySlug(ctx, "job")
@@ -85,15 +86,20 @@ func TestAbandonedRunKeepsSavedOutput(t *testing.T) {
 	if _, err := s.DB.ExecContext(ctx, "UPDATE runs SET pid = ? WHERE id = ?", dead.Process.Pid, run.ID); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := s.ReapAbandonedRuns(ctx); err != nil || n != 1 {
-		t.Fatalf("reaped %d, %v", n, err)
+	if err := maintain(ctx, s, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
 	}
 	reaped, err := s.GetRun(ctx, run.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reaped.Status != "failed" || !strings.HasPrefix(reaped.CombinedLog, "step 1 done\n") || !strings.Contains(reaped.Stderr, "abandoned") {
+	if reaped.Status != "failed" || !strings.HasPrefix(reaped.CombinedLog, "step 1 done\n") || !strings.Contains(reaped.Stderr, "abandoned") ||
+		!strings.Contains(reaped.Reason, "exited without recording a result") || reaped.FailureSignature == "" {
 		t.Fatalf("reaped run = %+v", reaped)
+	}
+	// Like any failure, it raises the job's --on-failure alert.
+	if e := events(); len(e) != 1 || !strings.HasPrefix(e[0], "failed job failed") {
+		t.Fatalf("events = %q", e)
 	}
 }
 

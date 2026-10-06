@@ -46,6 +46,9 @@ func digestCommand(ctx context.Context, args []string, stdout io.Writer) error {
 		return err
 	}
 	d := buildDigest(views, activity)
+	for i, r := range d.attention {
+		d.attention[i].View = withOutput(ctx, s, r.View)
+	}
 	if *quiet && !d.problems {
 		return nil
 	}

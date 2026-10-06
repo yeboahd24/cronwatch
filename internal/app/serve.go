@@ -144,10 +144,11 @@ func maintenanceLoop(ctx context.Context, done <-chan struct{}, s *storage.Store
 // alerts. Settling dead and overdue runs first means their status is known
 // before missed runs are judged.
 func maintain(ctx context.Context, s *storage.Store, stderr io.Writer) error {
-	if _, err := s.ReapAbandonedRuns(ctx); err != nil {
+	runs := lifecycle{s: s, stderr: stderr}
+	if err := runs.reapAbandoned(ctx); err != nil {
 		return fmt.Errorf("reap abandoned runs: %w", err)
 	}
-	expireHeartbeats(ctx, s, "", time.Now(), stderr)
+	runs.expireHeartbeats(ctx, "", time.Now())
 	// Failures recorded before signatures existed are signed a batch at a time.
 	if _, err := s.BackfillFailureSignatures(ctx, 500); err != nil {
 		return fmt.Errorf("sign earlier failures: %w", err)

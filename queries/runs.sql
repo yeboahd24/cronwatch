@@ -54,7 +54,7 @@ DELETE FROM runs WHERE status != 'running' AND started_at < COALESCE((
 
 -- name: SearchRunLogs :many
 -- Finished runs whose output contains query, ignoring ASCII case, filtered
--- like ListRunsPage and paged the same way.
+-- like ListRunSummariesPage and paged the same way.
 SELECT sqlc.embed(runs), jobs.name AS job_name
 FROM runs JOIN jobs ON jobs.id = runs.job_id
 WHERE runs.status != 'running'
@@ -67,19 +67,22 @@ WHERE runs.status != 'running'
        OR (runs.started_at = sqlc.narg(before_time) AND runs.id < sqlc.narg(before_id)))
 ORDER BY runs.started_at DESC, runs.id DESC LIMIT sqlc.arg(row_limit);
 
--- name: ListRunsPage :many
--- Runs newest first, optionally of one job, with one status, or started in
--- [since, until). A page continues after the run (before_time, before_id),
--- so runs recorded meanwhile do not shift it.
-SELECT sqlc.embed(runs), jobs.name AS job_name
-FROM runs JOIN jobs ON jobs.id = runs.job_id
-WHERE (sqlc.narg(job_id) IS NULL OR runs.job_id = sqlc.narg(job_id))
-  AND (sqlc.narg(status) IS NULL OR runs.status = sqlc.narg(status))
-  AND (sqlc.narg(since) IS NULL OR runs.started_at >= sqlc.narg(since))
-  AND (sqlc.narg(until) IS NULL OR runs.started_at < sqlc.narg(until))
-  AND (sqlc.narg(before_time) IS NULL OR runs.started_at < sqlc.narg(before_time)
-       OR (runs.started_at = sqlc.narg(before_time) AND runs.id < sqlc.narg(before_id)))
-ORDER BY runs.started_at DESC, runs.id DESC LIMIT sqlc.arg(row_limit);
+-- name: ListRunSummariesPage :many
+-- Runs without output, newest first, optionally of one job, with one
+-- status, or started in [since, until). A page continues after the run
+-- (before_time, before_id), so runs recorded meanwhile do not shift it.
+SELECT sqlc.embed(run_summaries), jobs.name AS job_name
+FROM run_summaries JOIN jobs ON jobs.id = run_summaries.job_id
+WHERE (sqlc.narg(job_id) IS NULL OR run_summaries.job_id = sqlc.narg(job_id))
+  AND (sqlc.narg(status) IS NULL OR run_summaries.status = sqlc.narg(status))
+  AND (sqlc.narg(since) IS NULL OR run_summaries.started_at >= sqlc.narg(since))
+  AND (sqlc.narg(until) IS NULL OR run_summaries.started_at < sqlc.narg(until))
+  AND (sqlc.narg(before_time) IS NULL OR run_summaries.started_at < sqlc.narg(before_time)
+       OR (run_summaries.started_at = sqlc.narg(before_time) AND run_summaries.id < sqlc.narg(before_id)))
+ORDER BY run_summaries.started_at DESC, run_summaries.id DESC LIMIT sqlc.arg(row_limit);
+
+-- name: ListRunSummariesForJob :many
+SELECT * FROM run_summaries WHERE job_id = ? ORDER BY started_at DESC LIMIT ?;
 
 -- name: SetRunEnv :exec
 UPDATE runs SET env_hash = ? WHERE id = ?;

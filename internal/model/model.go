@@ -66,6 +66,8 @@ type Run struct {
 	// OutputAt is when the output saved while the run was running last
 	// changed; nil if none was saved.
 	OutputAt *time.Time
+	// PID is the cronwatch process that ran the run; 0 for heartbeat runs.
+	PID int64
 }
 
 // Usage is the resources a run's command used.
@@ -94,7 +96,8 @@ func Unarchived(views []JobView) []JobView {
 
 type JobView struct {
 	Job
-	Status         string
+	Status string
+	// LastRun is a summary, without the run's output.
 	LastRun        *Run
 	NextExpectedAt *time.Time
 	// MissedAt is the latest missed occurrence while Status is "missed".

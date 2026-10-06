@@ -64,7 +64,8 @@
 {{if .Removed}}<div class="log-viewer" tabindex="0" aria-label="Lines from the last success missing in this run">{{template "loglines" .Removed}}</div>
 {{else}}<div class="panel"><p class="empty">Nothing missing: every line of the last success appears in this run.</p></div>{{end}}
 {{else}}
-{{if eq .Run.Status "running"}}<div id="run-live" data-live="/runs/{{.Run.ID}}/live?stream={{.Stream}}">{{template "run_live" .}}</div>
+{{if eq .Run.Status "running"}}<p class="refresh-status" id="refresh-status" role="status">Updates every 5 seconds.</p>
+<div id="run-live" data-live="/runs/{{.Run.ID}}/live?stream={{.Stream}}">{{template "run_live" .}}</div>
 {{else}}{{template "run_output" .Lines}}{{end}}
 {{end}}
 {{with .Env}}
@@ -92,7 +93,7 @@
 {{define "run_live"}}<p class="live-note"><span class="live-dot" aria-hidden="true"></span>Running for {{since .Run.StartedAt}}.
 {{- if .Run.OutputAt}} Output last changed {{since .Run.OutputAt}} ago{{if .Quiet}}, <span class="text-warning">no new output since</span>{{end}}.
 {{- else}} No output saved yet{{if .Quiet}}, <span class="text-warning">none since it started</span>{{end}}.{{end}}
-Updates every few seconds.</p>
+</p>
 {{template "run_output" .Lines}}{{end}}
 
 {{define "run_live_partial"}}<div id="run-live">{{template "run_live" .}}</div>{{end}}

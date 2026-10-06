@@ -101,9 +101,11 @@ jobs and logs; it cannot execute commands.
   error is **new** or how many earlier runs failed the same way and when it
   was first seen; a job's page lists each failure type with its count, first
   and last time.
-- **Logs** searches run output, 50 runs to a page, with **Older** for the
-  runs before them and the same job, status and date filters as Runs;
-  **Errors only** limits results to stderr lines. A run's page has a **Download** link for its
+- **Logs** searches the output of finished runs, with the same job, status
+  and date filters as Runs. Each page holds the newest 50 runs whose output
+  matches, and **Older** continues with the next 50. **Errors only** then
+  keeps only their stderr lines, so a page can show fewer runs; the note under
+  the results says how many matched and how many are shown. A run's page has a **Download** link for its
   output as a `.log` file (the whole output, or the stream you are viewing).
 - **Timeline** shows every job's runs over the last 24 hours or 7 days, one row
   per job, with expected run times and missed runs, so failures, gaps and jobs
