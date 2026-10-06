@@ -5,15 +5,24 @@
 CronWatch wraps scheduled commands and records their results in a local SQLite
 database. A small web dashboard shows job status, run history, duration, and
 captured logs. It ships as one Go binary and needs no account or daemon to
-record runs.
+record runs. For several servers, each can send a job summary to a hub while
+keeping its full run history and logs locally.
 
-![CronWatch records cron jobs on a remote server; an SSH tunnel (ssh -L 8765:localhost:8765) brings its local dashboard to your browser at localhost:8765, showing each job's status, last run, duration, and logs.](docs/images/cronwatch-overview.png)
+![Cron triggers a script through cronwatch run, which records results in local SQLite storage for the dashboard. Jobs that cannot be wrapped report starts and results with cronwatch ping. The dashboard has Jobs, Runs, Logs, Timeline and Servers views; remote servers can send summaries to a hub.](docs/images/cronwatch-overview.png)
 
-[Install](#install) · [Quick start](#quick-start) · [CLI](#cli) · [Development](#development)
+[Install](#install) · [Quick start](#quick-start) · [Command map](#command-map) · [CLI](#cli) · [Multiple servers](#multiple-servers) · [Development](#development)
+
+Cron decides when to start your work. `cronwatch run` wraps the command and
+records what happened; `cronwatch ping` lets a script report its own start
+and result. `cronwatch serve` opens the read-only dashboard and checks for
+missed starts, overdue pings and alerts waiting for delivery. Run jobs and
+the dashboard as the same user, or point them at the same data directory.
 
 ## Highlights
 
 - **Drop-in command wrapper.** Add `cronwatch run` to an existing cron entry.
+- **Guided setup for existing jobs.** `cronwatch sync --wrap` previews the
+  changes; `--apply` installs them after saving a backup.
 - **Useful failure detail.** Capture stdout, stderr, exit codes, and duration.
 - **Works here, fails in cron?** Each run records its environment, so
   `cronwatch envdiff` shows what cron's `PATH`, shell, or directory lacks, and
@@ -26,6 +35,9 @@ record runs.
   failing or recovers, or let cron email you a daily `cronwatch digest`.
 - **Local by default.** SQLite storage and a dashboard bound to
   `127.0.0.1:8765`; SSH forwarding covers remote servers.
+- **Several servers in one view.** Authenticated reports feed a hub's
+  **Servers** tab, with stale reports clearly marked. Full logs stay on
+  each server.
 - **Single binary.** HTML, CSS, JavaScript, and database migrations are embedded.
 
 ## Install
@@ -178,6 +190,15 @@ command's output through:
 The cron entry and dashboard must run under the same user to see the same
 database. A user-level systemd service example is in
 [`examples/cronwatch.service`](examples/cronwatch.service).
+
+## Command map
+
+This map explains every command and how to navigate the dashboard. Use it to
+choose where to start, then follow the [CLI reference](#cli) for examples
+and flags. [Open the full-size image](docs/images/cronwatch-command-map.png)
+to read the details.
+
+![CronWatch's complete command map: record jobs with run, ping and sync; inspect and investigate with jobs, runs, envdiff, try, crontab-history and doctor; operate with serve, digest, check, pause, resume, archive, prune and timers; connect servers with hosts and report; find help with version and help. Dashboard navigation covers Jobs, Runs, Logs, Timeline and Servers.](docs/images/cronwatch-command-map.png)
 
 ## CLI
 
