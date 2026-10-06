@@ -226,6 +226,7 @@ Backup written to /backups/db.sql.gz
 | `--no-overlap` | Skip the run, and record it as `skipped`, if the job's previous run is still running. |
 | `--on-failure 'CMD'` | Shell command to run when the job starts failing. See [Notifications](#notifications). |
 | `--on-recover 'CMD'` | Shell command to run when the job succeeds again after failing. |
+| `--on-storage-error fail\|run` | What to do when the run cannot be recorded. See [When recording fails](#when-recording-fails). |
 
 `--schedule` and `--grace` only change the stored job when you pass them, so
 running a job by hand to test it does not reset its schedule.
@@ -276,6 +277,34 @@ recorded status instead.
 CronWatch notices overlapping runs even without `--no-overlap`: a run that
 starts while the job's previous run is still going is marked on its page and
 outlined on the timeline.
+
+#### When recording fails
+
+Before starting the command, `cronwatch run` takes the job's lock, opens the
+database, registers the job and records the run's start. If any of that fails
+(an unreadable config, a full disk, a broken database), `--on-storage-error`
+decides what happens:
+
+- `fail` (the default): the command does not run. CronWatch prints the error
+  and exits 1, so cron mails you about it.
+- `run`: CronWatch prints a warning and runs the command anyway. Its output
+  passes through, `--timeout` and the success rules apply, and it exits as it
+  would have, but nothing is recorded and no hooks run, because whether the job
+  changed state cannot be known.
+
+`--no-overlap` is kept even when the run is not recorded. The lock is a file in
+the data directory, taken before the database is opened. If another run holds
+it, the run is skipped and CronWatch exits 0, as usual. If the lock itself
+cannot be taken, CronWatch cannot tell whether another run is going, so the
+command does not run and CronWatch exits 1.
+
+If the command runs but its result cannot be saved, `fail` reports the error and
+exits 1; `run` prints a warning and exits with the command's own code. The
+unfinished run is marked failed later, once CronWatch sees its process has
+gone.
+
+Set `CRONWATCH_ON_STORAGE_ERROR=run` at the top of a crontab to apply it to
+every job; a flag on a line takes precedence.
 
 #### Notifications
 

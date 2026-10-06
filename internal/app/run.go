@@ -69,7 +69,22 @@ type runOptions struct {
 	Rules       runRules
 	StrictExit  bool
 	NoOverlap   bool
+	// OnStorageError is "run" to run the command even when the run cannot
+	// be recorded, "fail" not to, or "" when not passed.
+	OnStorageError string
 }
+
+// validStorageAction checks a --on-storage-error value from source.
+func validStorageAction(source, v string) error {
+	switch v {
+	case "", "fail", "run":
+		return nil
+	}
+	return fmt.Errorf("%s must be fail or run, not %q", source, v)
+}
+
+// envOnStorageError sets --on-storage-error when it is not passed.
+const envOnStorageError = "CRONWATCH_ON_STORAGE_ERROR"
 
 // parseRunArgs parses "cronwatch run" arguments. It is shared with crontab
 // sync so both derive the same job from the same arguments.
@@ -94,6 +109,7 @@ func parseRunArgs(args []string, help io.Writer) (runOptions, error) {
 	noOverlap := fs.Bool("no-overlap", false, "skip this run, and record it as skipped, if the job's previous run is still running")
 	onFailure := fs.String("on-failure", "", "shell `command` to run when the job starts failing, times out or misses a run (default $"+envOnFailure+")")
 	onRecover := fs.String("on-recover", "", "shell `command` to run when the job succeeds again after failing (default $"+envOnRecover+")")
+	onStorageError := fs.String("on-storage-error", "", "`action` when the run cannot be recorded: fail (do not run the command) or run (run it unrecorded) (default $"+envOnStorageError+", else fail)")
 	sep := len(args)
 	for i, arg := range args {
 		if arg == "--" {
@@ -154,6 +170,9 @@ func parseRunArgs(args []string, help io.Writer) (runOptions, error) {
 		}
 		*m.dst = re
 	}
+	if err := validStorageAction("--on-storage-error", *onStorageError); err != nil {
+		return opts, err
+	}
 	if *slug == "" {
 		*slug = slugify(*name)
 	}
@@ -161,14 +180,15 @@ func parseRunArgs(args []string, help io.Writer) (runOptions, error) {
 		return opts, errors.New("--slug must contain lowercase letters, digits, or hyphens")
 	}
 	opts = runOptions{
-		Spec:        storage.JobSpec{Slug: *slug, Name: *name, Command: joinCommand(command)},
-		Command:     command,
-		DataDir:     *dataDir,
-		NoEcho:      *noEcho,
-		MaxLogBytes: *maxLogBytes,
-		Rules:       rules,
-		StrictExit:  *strictExit,
-		NoOverlap:   *noOverlap,
+		Spec:           storage.JobSpec{Slug: *slug, Name: *name, Command: joinCommand(command)},
+		Command:        command,
+		DataDir:        *dataDir,
+		NoEcho:         *noEcho,
+		MaxLogBytes:    *maxLogBytes,
+		Rules:          rules,
+		StrictExit:     *strictExit,
+		NoOverlap:      *noOverlap,
+		OnStorageError: *onStorageError,
 	}
 	// Only flags passed on this invocation change the stored job.
 	fs.Visit(func(f *flag.Flag) {
@@ -217,8 +237,14 @@ func runCommand(ctx context.Context, args []string, stdout, stderr io.Writer) er
 	if err != nil {
 		return err
 	}
-	spec, command := opts.Spec, opts.Command
-	// Hook variables set in the crontab apply when the flags are not passed.
+	// Variables set in the crontab apply when the flags are not passed.
+	if opts.OnStorageError == "" {
+		opts.OnStorageError = os.Getenv(envOnStorageError)
+		if err := validStorageAction(envOnStorageError, opts.OnStorageError); err != nil {
+			return err
+		}
+	}
+	spec := opts.Spec
 	for _, h := range []struct {
 		dst **string
 		env string
@@ -230,13 +256,21 @@ func runCommand(ctx context.Context, args []string, stdout, stderr io.Writer) er
 	if opts.DataDir == "" {
 		cfg, err := config.Load()
 		if err != nil {
-			return err
+			return runUnrecorded(ctx, opts, nil, false, err, stdout, stderr)
 		}
 		opts.DataDir = cfg.DataDir
 	}
+	// The job lock is held while the command runs, so a second run of the
+	// same job can tell that the first has not finished. It is taken before
+	// the database is opened, so it works even when the database does not.
+	lock, locked, err := lockJob(opts.DataDir, spec.Slug)
+	if err != nil {
+		return runUnrecorded(ctx, opts, nil, false, err, stdout, stderr)
+	}
+	defer lock.Close()
 	s, err := storage.Open(ctx, opts.DataDir)
 	if err != nil {
-		return err
+		return runUnrecorded(ctx, opts, lock, locked, err, stdout, stderr)
 	}
 	defer s.Close()
 	// Different names that slugify alike would silently share one history.
@@ -245,19 +279,12 @@ func runCommand(ctx context.Context, args []string, stdout, stderr io.Writer) er
 	}
 	job, err := s.UpsertJob(ctx, spec)
 	if err != nil {
-		return err
+		return runUnrecorded(ctx, opts, lock, locked, err, stdout, stderr)
 	}
-	// The job lock is held while the command runs, so a second run of the
-	// same job can tell that the first has not finished.
-	lock, locked, err := lockJob(opts.DataDir, job.Slug)
-	if err != nil {
-		return err
-	}
-	defer lock.Close()
 	started := time.Now().UTC()
 	run, err := s.CreateRun(ctx, job.ID, started)
 	if err != nil {
-		return err
+		return runUnrecorded(ctx, opts, lock, locked, err, stdout, stderr)
 	}
 	if !locked {
 		previous := ""
@@ -275,6 +302,28 @@ func runCommand(ctx context.Context, args []string, stdout, stderr io.Writer) er
 	if err := s.SetRunEnv(ctx, run.ID, runenv.Capture()); err != nil {
 		fmt.Fprintf(stderr, "cronwatch: warning: could not record the environment: %v\n", err)
 	}
+	result, status, reason, runErr := execute(ctx, opts, stdout, stderr)
+	code := result.ExitCode
+	// A cancelled context cannot be used to save the final state.
+	finishCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := s.CompleteRun(finishCtx, run.ID, storage.Completion{Ended: time.Now().UTC(), Duration: result.Duration,
+		Status: status, ExitCode: &code, Stdout: result.Stdout, Stderr: result.Stderr, Combined: result.Combined,
+		Truncated: result.Truncated, Reason: reason, Usage: result.Usage}); err != nil {
+		if opts.OnStorageError != "run" {
+			return fmt.Errorf("record run result: %w", err)
+		}
+		// The command has run; keep its exit code rather than report ours.
+		fmt.Fprintf(stderr, "cronwatch: warning: could not record the run's result (--on-storage-error run): %v\n", err)
+	} else if finished, err := s.GetRun(finishCtx, run.ID); err == nil {
+		notifyRun(finishCtx, s, job, finished, stderr)
+	}
+	return finalExit(status, code, runErr, opts.StrictExit)
+}
+
+// execute runs the command with opts' output, timeout and rules, and judges
+// the result.
+func execute(ctx context.Context, opts runOptions, stdout, stderr io.Writer) (result runner.Result, status, reason string, runErr error) {
 	var out, errOut io.Writer
 	if !opts.NoEcho {
 		out = stdout
@@ -287,28 +336,44 @@ func runCommand(ctx context.Context, args []string, stdout, stderr io.Writer) er
 		defer cancelRun()
 	}
 	var seen outputSeen
-	result, runErr := runner.Execute(runCtx, command, out, errOut, opts.MaxLogBytes, opts.Rules.watch(&seen))
-	code := result.ExitCode
-	status, reason := opts.Rules.judge(result, seen)
+	result, runErr = runner.Execute(runCtx, opts.Command, out, errOut, opts.MaxLogBytes, opts.Rules.watch(&seen))
+	status, reason = opts.Rules.judge(result, seen)
 	if reason != "" && status != "success" {
 		fmt.Fprintf(stderr, "cronwatch: %s: %s\n", status, reason)
 	}
-	// A cancelled context cannot be used to save the final state.
-	finishCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := s.CompleteRun(finishCtx, run.ID, storage.Completion{Ended: time.Now().UTC(), Duration: result.Duration,
-		Status: status, ExitCode: &code, Stdout: result.Stdout, Stderr: result.Stderr, Combined: result.Combined,
-		Truncated: result.Truncated, Reason: reason, Usage: result.Usage}); err != nil {
-		return fmt.Errorf("record run result: %w", err)
-	}
-	if finished, err := s.GetRun(finishCtx, run.ID); err == nil {
-		notifyRun(finishCtx, s, job, finished, stderr)
-	}
-	if exit := exitCode(status, code, opts.StrictExit); exit != 0 {
+	return result, status, reason, runErr
+}
+
+// finalExit is what "cronwatch run" returns once the command has run.
+func finalExit(status string, code int, runErr error, strict bool) error {
+	if exit := exitCode(status, code, strict); exit != 0 {
 		if runErr == nil {
 			runErr = errRuleFailed
 		}
 		return &ExitError{Code: exit, Err: runErr}
 	}
 	return nil
+}
+
+// runUnrecorded handles a run that cannot be recorded because of storeErr.
+// By default the command does not run and storeErr is returned. With
+// --on-storage-error run, the command runs as usual but nothing is stored
+// and no hooks run, since whether the job changed state is not known.
+// --no-overlap still holds: the run is skipped if the job's lock is held by
+// another run, and the command does not run at all if the lock could not be
+// checked (lock is nil).
+func runUnrecorded(ctx context.Context, opts runOptions, lock *os.File, locked bool, storeErr error, stdout, stderr io.Writer) error {
+	if opts.OnStorageError != "run" {
+		return storeErr
+	}
+	if opts.NoOverlap && lock == nil {
+		return fmt.Errorf("not running: --no-overlap cannot check for another run: %w", storeErr)
+	}
+	fmt.Fprintf(stderr, "cronwatch: warning: this run will not be recorded (--on-storage-error run): %v\n", storeErr)
+	if opts.NoOverlap && !locked {
+		fmt.Fprintln(stderr, "cronwatch: skipped: another run of this job was still running (--no-overlap)")
+		return nil
+	}
+	result, status, _, runErr := execute(ctx, opts, stdout, stderr)
+	return finalExit(status, result.ExitCode, runErr, opts.StrictExit)
 }
