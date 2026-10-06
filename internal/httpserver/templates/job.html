@@ -40,6 +40,24 @@
   </table>
 </section>
 {{end}}
+{{if .Alerts}}
+<h2 id="alerts">Alerts</h2>
+<section class="panel table-wrap">
+  <table class="alerts-table">
+    <thead><tr><th scope="col">Raised</th><th scope="col">Event</th><th scope="col">Delivery</th><th scope="col">Last error</th></tr></thead>
+    <tbody>
+    {{- range .Alerts}}
+    <tr>
+      <td data-label="Raised">{{if .RunID}}<a href="/runs/{{.RunID}}">{{template "time" .Created}}</a>{{else}}{{template "time" .Created}}{{end}}</td>
+      <td data-label="Event">{{status .Event}} <small class="muted">{{if eq .Hook "on_recover"}}--on-recover{{else}}--on-failure{{end}}</small></td>
+      <td data-label="Delivery">{{template "delivery" .}}</td>
+      <td data-label="Last error" class="cell-error">{{if .LastError}}<code>{{.LastError}}</code>{{with .LastOutput}}<details><summary>Output</summary><pre>{{.}}</pre></details>{{end}}{{else}}—{{end}}</td>
+    </tr>
+    {{- end}}
+    </tbody>
+  </table>
+</section>
+{{end}}
 {{if .Crontab}}
 <h2 id="crontab-history">Crontab history</h2>
 <section class="panel history">

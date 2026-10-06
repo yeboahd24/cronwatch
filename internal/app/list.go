@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -135,7 +136,7 @@ func pruneCommand(ctx context.Context, args []string, stdout io.Writer) error {
 		"Delete finished runs beyond the newest N per job and/or older than a duration. Running runs are kept.")
 	dir := fs.String("data-dir", "", "data directory")
 	keep := fs.Int("keep", 0, "finished runs to keep per job (0 = no limit)")
-	olderThan := fs.Duration("older-than", 0, "delete runs, missed occurrences and crontab history older than this, e.g. 720h (0 = no limit)")
+	olderThan := fs.Duration("older-than", 0, "delete runs, missed occurrences, crontab history and finished alerts older than this, e.g. 720h (0 = no limit)")
 	if err := parseFlags(fs, args, stdout); err != nil {
 		return err
 	}
@@ -161,10 +162,14 @@ func pruneCommand(ctx context.Context, args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "Deleted %d runs and %d missed occurrences", result.Runs, result.MissedOccurrences)
+	parts := []string{plural(int(result.Runs), "run", "runs"), plural(int(result.MissedOccurrences), "missed occurrence", "missed occurrences")}
 	if result.CrontabSnapshots > 0 {
-		fmt.Fprintf(stdout, ", and %s", plural(int(result.CrontabSnapshots), "crontab snapshot", "crontab snapshots"))
+		parts = append(parts, plural(int(result.CrontabSnapshots), "crontab snapshot", "crontab snapshots"))
 	}
+	if result.Alerts > 0 {
+		parts = append(parts, plural(int(result.Alerts), "alert", "alerts"))
+	}
+	fmt.Fprint(stdout, "Deleted "+strings.Join(parts[:len(parts)-1], ", ")+" and "+parts[len(parts)-1])
 	fmt.Fprintln(stdout, ".")
 	return nil
 }

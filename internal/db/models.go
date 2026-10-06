@@ -8,6 +8,22 @@ import (
 	"database/sql"
 )
 
+type Alert struct {
+	ID            string
+	JobID         string
+	RunID         sql.NullString
+	Event         string
+	Hook          string
+	Environ       string
+	CreatedAt     string
+	Status        string
+	Attempts      int64
+	NextAttemptAt sql.NullString
+	LastAttemptAt sql.NullString
+	LastError     string
+	LastOutput    string
+}
+
 type CrontabChange struct {
 	ID         string
 	SnapshotID string

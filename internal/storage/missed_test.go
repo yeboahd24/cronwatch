@@ -157,3 +157,36 @@ func mustJob(t *testing.T, s *Store, slug string) model.Job {
 	}
 	return j
 }
+
+func TestPruneKeepsPendingAlerts(t *testing.T) {
+	ctx := context.Background()
+	s := openTest(t)
+	job, err := s.UpsertJob(ctx, testSpec("p", "", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-48 * time.Hour)
+	for range 2 {
+		if err := s.QueueAlert(ctx, NewAlert{JobID: job.ID, Event: "missed", Hook: "on_failure", Created: old}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pending, err := s.PendingAlerts(ctx, job.ID)
+	if err != nil || len(pending) != 2 {
+		t.Fatalf("pending = %+v, %v", pending, err)
+	}
+	if err := s.FinishAlertAttempt(ctx, pending[0].ID, AlertDelivered, nil, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	result, err := s.Prune(ctx, 0, time.Now().Add(-24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	left, err := s.JobAlerts(ctx, job.ID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Alerts != 1 || len(left) != 1 || left[0].Status != AlertPending {
+		t.Fatalf("prune %+v left %+v", result, left)
+	}
+}

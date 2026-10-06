@@ -151,7 +151,8 @@ type dashboard struct {
 // jobRow is a job on the jobs list with its recent durations.
 type jobRow struct {
 	model.JobView
-	Trend *jobTrend
+	Trend             *jobTrend
+	UndeliveredAlerts int // alerts that failed and are not delivered
 }
 
 // loadDashboard returns the job views and the run for the Recent logs panel:
@@ -161,13 +162,17 @@ func (s *Server) loadDashboard(r *http.Request) (dashboard, error) {
 	if err != nil {
 		return dashboard{}, err
 	}
+	undelivered, err := s.Store.UndeliveredAlerts(r.Context())
+	if err != nil {
+		return dashboard{}, err
+	}
 	d := dashboard{}
 	for _, j := range jobs {
 		trend, err := s.Store.JobTrend(r.Context(), j.ID, listSparkRuns, s.now())
 		if err != nil {
 			return dashboard{}, err
 		}
-		d.Jobs = append(d.Jobs, jobRow{JobView: j, Trend: newJobTrend(trend, j.Name)})
+		d.Jobs = append(d.Jobs, jobRow{JobView: j, Trend: newJobTrend(trend, j.Name), UndeliveredAlerts: undelivered[j.ID]})
 		if model.Failing(j.Status) && j.LastRun != nil && (d.Recent == nil || j.LastRun.StartedAt.After(d.Recent.Run.StartedAt)) {
 			d.Recent = &logExcerpt{Run: *j.LastRun, JobName: j.Name}
 		}
@@ -237,20 +242,27 @@ func (s *Server) handleJob(w http.ResponseWriter, r *http.Request) {
 		queryError(w, err)
 		return
 	}
+	alerts, err := s.Store.JobAlerts(r.Context(), job.ID, alertListLimit)
+	if err != nil {
+		queryError(w, err)
+		return
+	}
 	s.render(w, "job.html", page{Title: job.Name, Tab: "jobs", Data: struct {
 		View     model.JobView
 		Runs     []model.Run
 		Failures []storage.FailureGroup
 		Trend    *jobTrend
 		Crontab  []storage.CrontabChange
-	}{view, runs, groups, newJobTrend(trend, job.Name), history}})
+		Alerts   []storage.Alert
+	}{view, runs, groups, newJobTrend(trend, job.Name), history, alerts}})
 }
 
-// failureGroupLimit caps the Failure types table on a job page, and
-// crontabHistoryLimit its Crontab history.
+// failureGroupLimit caps the Failure types table on a job page,
+// crontabHistoryLimit its Crontab history and alertListLimit its Alerts.
 const (
 	failureGroupLimit   = 10
 	crontabHistoryLimit = 10
+	alertListLimit      = 10
 )
 
 // failureSummary is the line that best describes how a run failed: its last
@@ -335,6 +347,11 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 		}
 		history = &h
 	}
+	alerts, err := s.Store.RunAlerts(r.Context(), run.ID)
+	if err != nil {
+		queryError(w, err)
+		return
+	}
 	s.render(w, "run.html", page{Title: "Run · " + job.Name, Tab: "runs", Data: struct {
 		Run         model.Run
 		Job         model.Job
@@ -346,7 +363,8 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 		Compare     *logCompare
 		History     *storage.FailureHistory
 		Slow        *durations.Slowness
-	}{run, job, stream, lines, logs.LastError(stderr), env, success, compare, history, slow}})
+		Alerts      []storage.Alert
+	}{run, job, stream, lines, logs.LastError(stderr), env, success, compare, history, slow, alerts}})
 }
 
 // handleRunLog serves a run's output as a plain-text download: the combined

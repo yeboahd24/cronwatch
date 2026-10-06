@@ -664,3 +664,67 @@ func TestMetrics(t *testing.T) {
 		t.Fatalf("Content-Type = %q", ct)
 	}
 }
+
+func TestAlertDeliveryIsShown(t *testing.T) {
+	ctx := context.Background()
+	s, err := storage.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	hook := "mail-me"
+	job, err := s.UpsertJob(ctx, storage.JobSpec{Slug: "backup", Name: "Backup", Command: `"true"`, OnFailure: &hook})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := s.CreateRun(ctx, job.ID, time.Now().Add(-time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := 1
+	if err := s.CompleteRun(ctx, run.ID, storage.Completion{Ended: time.Now(), Status: "failed", ExitCode: &code}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.QueueAlert(ctx, storage.NewAlert{JobID: job.ID, RunID: run.ID, Event: "failed", Hook: "on_failure", Created: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := s.PendingAlerts(ctx, job.ID)
+	if err != nil || len(pending) != 1 || pending[0].Command != hook {
+		t.Fatalf("pending = %+v, %v", pending, err)
+	}
+	now := time.Now()
+	if ok, err := s.ClaimAlert(ctx, pending[0].ID, now, now.Add(time.Minute)); !ok || err != nil {
+		t.Fatalf("claim = %v, %v", ok, err)
+	}
+	retry := now.Add(time.Minute)
+	if err := s.FinishAlertAttempt(ctx, pending[0].ID, storage.AlertPending, &retry, "exit status 1", "smtp: <refused>"); err != nil {
+		t.Fatal(err)
+	}
+	server, err := New(s, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	get := func(path string) string {
+		recorder := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Host = "localhost:8765"
+		server.Router.ServeHTTP(recorder, req)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("%s: status %d", path, recorder.Code)
+		}
+		return recorder.Body.String()
+	}
+	for path, want := range map[string][]string{
+		"/":                   {`href="/jobs/` + job.ID + `#alerts">1 alert not delivered</a>`},
+		"/jobs/" + job.ID:     {`<h2 id="alerts">Alerts</h2>`, `<span class="text-warning">Retrying</span> after 1 failed attempt, next`, `<code>exit status 1</code>`, `<pre>smtp: &lt;refused&gt;</pre>`},
+		"/runs/" + run.ID:     {`<dt>Failure alert</dt><dd><span class="text-warning">Retrying</span>`},
+		"/partials/dashboard": {"1 alert not delivered"},
+	} {
+		page := get(path)
+		for _, w := range want {
+			if !strings.Contains(page, w) {
+				t.Fatalf("%s lacks %q:\n%s", path, w, page)
+			}
+		}
+	}
+}

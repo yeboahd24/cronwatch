@@ -306,8 +306,24 @@ any `%` as `\%`, because cron treats `%` in a command as a newline.
 CRONWATCH_ON_FAILURE=curl -fsS -d "$CRONWATCH_JOB_NAME $CRONWATCH_EVENT: $CRONWATCH_LAST_ERROR" https://ntfy.sh/my-cron-alerts
 ```
 
-Hooks run after the result is recorded, with a 30-second limit. A hook that
-fails or times out is reported on stderr and never changes the job's result.
+Hooks run after the result is recorded, with a 30-second limit, and the last
+4 KiB of their output is kept. A hook that fails or times out never changes the
+job's result. CronWatch prints the error on stderr, stores the alert, and
+retries it: after 1 minute, then 2, 4 and so on up to an hour apart, for 12
+attempts in all (about seven hours). A retry runs the job's current hook, so
+fixing a broken hook command also fixes its waiting alerts. A job's alerts are
+delivered in order: one waiting for a retry holds back the job's later
+alerts. Retries happen on the job's next `cronwatch run` or `ping`, every
+minute while `cronwatch serve` is running, and whenever `jobs`, `runs` or
+`prune` checks for missed runs. Each attempt also gets
+`CRONWATCH_ALERT_ID`, which stays the same across retries, and
+`CRONWATCH_ATTEMPT`, which counts from 1, so a hook can ignore an alert it has
+already sent.
+
+The job page lists the job's alerts, with each one's delivery status and last
+error, and the run page shows the alert the run raised. The jobs list flags
+jobs with alerts that failed and have not been delivered.
+
 Missed runs are detected by `cronwatch serve` (or `jobs`, `runs`, `prune`), so
 their alerts need one of those running.
 
@@ -322,7 +338,8 @@ login, so it only listens on loopback; reach it from another machine with
 `ssh -L 8765:localhost:8765 user@server`. Binding to another address requires
 `--public`. While running, it also registers jobs from your crontab
 ([crontab sync](#crontab-sync)) and checks for missed runs every minute,
-running `--on-failure` hooks for jobs that start missing runs.
+running `--on-failure` hooks for jobs that start missing runs and retrying
+alerts that could not be delivered.
 
 ```console
 $ cronwatch serve
@@ -646,8 +663,9 @@ cronwatch prune [--keep N] [--older-than DURATION]
 ```
 
 Deletes finished runs: `--keep N` keeps the newest N per job, and
-`--older-than` deletes runs and missed-run records older than a duration
-(`720h` is 30 days). At least one is required. Running runs are never deleted.
+`--older-than` deletes runs, missed-run records, crontab history and delivered,
+undelivered or cancelled alerts older than a duration (`720h` is 30 days). At
+least one is required. Running runs are never deleted.
 
 ```console
 $ cronwatch prune --keep 200 --older-than 720h

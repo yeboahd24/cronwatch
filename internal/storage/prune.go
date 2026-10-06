@@ -10,12 +10,12 @@ import (
 
 // PruneResult counts the rows Prune deleted.
 type PruneResult struct {
-	Runs, MissedOccurrences, CrontabSnapshots int64
+	Runs, MissedOccurrences, CrontabSnapshots, Alerts int64
 }
 
 // Prune deletes finished runs beyond the newest keep per job (keep 0 means no
 // limit) and runs and missed occurrences older than before (zero means no age
-// limit). Running runs are never deleted.
+// limit). Running runs and pending alerts are never deleted.
 func (s *Store) Prune(ctx context.Context, keep int, before time.Time) (PruneResult, error) {
 	var result PruneResult
 	if keep < 0 {
@@ -45,6 +45,9 @@ func (s *Store) Prune(ctx context.Context, keep int, before time.Time) (PruneRes
 		}
 		// Deleting a snapshot deletes its changes.
 		if result.CrontabSnapshots, err = q.DeleteCrontabSnapshotsBefore(ctx, timestamp(before)); err != nil {
+			return result, err
+		}
+		if result.Alerts, err = q.DeleteAlertsBefore(ctx, timestamp(before)); err != nil {
 			return result, err
 		}
 	}

@@ -36,6 +36,11 @@
 
 {{define "status"}}<span class="status status-{{.}}">{{status .}}</span>{{end}}
 
+{{define "delivery"}}{{if eq .Status "delivered"}}<span class="text-success">Delivered</span>{{if .LastAttemptAt}} {{template "time" .LastAttemptAt}}{{end}}
+{{- else if eq .Status "pending"}}{{if .LastError}}<span class="text-warning">Retrying</span> after {{.Attempts}} failed {{if eq .Attempts 1}}attempt{{else}}attempts{{end}}{{if .NextAttemptAt}}, next {{template "time" .NextAttemptAt}}{{end}}{{else}}<span class="muted">Waiting to send</span>{{end}}
+{{- else if eq .Status "undelivered"}}<span class="text-danger">Not delivered</span> after {{.Attempts}} attempts
+{{- else}}<span class="muted">Cancelled</span>{{end}}{{end}}
+
 {{define "time"}}<time datetime="{{iso .}}" title="{{full .}}">{{when .}}</time>{{end}}
 
 {{define "sparkline"}}<svg class="spark" role="img" aria-label="{{.Summary}}">
