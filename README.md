@@ -194,6 +194,8 @@ database. A user-level systemd service example is in
 | [`cronwatch ping`](#cronwatch-ping) | Record a run of a job you cannot wrap |
 | [`cronwatch check`](#cronwatch-check) | One status line and exit code for monitoring systems |
 | [`cronwatch doctor`](#cronwatch-doctor) | Check the setup and explain what is wrong |
+| [`cronwatch hosts`](#multiple-servers) | Add and remove the servers that report to a hub |
+| [`cronwatch report`](#multiple-servers) | Send this server's jobs to its hub once |
 | [`cronwatch timers`](#cronwatch-timers) | List systemd timers and their last results |
 | [`cronwatch prune`](#cronwatch-prune) | Delete old finished runs |
 | [`cronwatch version`](#cronwatch-version) | Print the version |
@@ -904,6 +906,83 @@ Deleted 37 runs and 2 missed occurrences.
 $ cronwatch version
 v0.2.2
 ```
+
+## Multiple servers
+
+One CronWatch can show the jobs of several servers. Each server pushes a
+summary of its jobs to that CronWatch, the **hub**, every minute; the hub's
+**Servers** tab shows every server, whether it is reporting, and all their
+jobs, those needing attention first.
+
+Servers push, so they need only outbound access to the hub and open no ports
+themselves. Only the hub listens, on a port of its own that accepts reports
+and nothing else; its dashboard stays on loopback as usual.
+
+**1. On the hub**, add a host for each server. Each gets a token, shown once;
+the hub keeps only its hash, and the token decides which host a report is
+for, so one server cannot report as another:
+
+```console
+$ cronwatch hosts add web-1
+Added host web-1.
+
+Its token, shown only now:
+
+  cwh_3q2…
+
+On web-1, save it where only cronwatch's user can read it:
+…
+```
+
+Then serve with a port for reports. They must arrive over HTTPS, so pass a
+certificate and key; a self-signed pair will do:
+
+```sh
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 825 \
+  -subj /CN=hub.example -addext subjectAltName=DNS:hub.example \
+  -keyout hub.key -out hub.crt
+cronwatch serve --hub-addr :8766 --hub-cert hub.crt --hub-key hub.key
+```
+
+Behind a reverse proxy that terminates TLS, give `--hub-addr` a loopback
+address such as `127.0.0.1:8766` instead, without a certificate.
+
+**2. On each server**, put the token in a file only CronWatch's user can read,
+and report from `cronwatch serve`:
+
+```sh
+cronwatch serve --report-to https://hub.example:8766 --report-token-file ~/.config/cronwatch/hub-token
+```
+
+Add `--report-ca hub.crt` to trust a self-signed hub certificate. The token
+can also come from `$CRONWATCH_REPORT_TOKEN`; it is never passed on the
+command line, where other users could see it. A server without `serve` can
+report from cron instead, after `cronwatch check` so missed runs are current:
+
+```cron
+* * * * * cronwatch check >/dev/null; cronwatch report --to https://hub.example:8766 --token-file ~/.config/cronwatch/hub-token
+```
+
+A report lists each job with its status, schedule, next expected run, missed
+run, pause and undelivered alerts, and its last run's times, exit code,
+reason and, for a failed run, the last line it wrote to stderr. No other
+output leaves the server. Archived jobs are left out.
+
+**What the hub shows.** A server that has not reported for 3 minutes is
+**stale**: the hub says so, and its jobs are shown dimmed, as of its last
+report, so old data never passes for current. One that never reported is
+listed as such. `cronwatch hosts list` shows the same:
+
+```console
+$ cronwatch hosts list
+NAME   STATUS      LAST REPORT  JOBS  VERSION
+web-1  2 problems  12s ago      6     v0.10.0
+web-2  stale       14m ago      3     v0.10.0
+```
+
+`cronwatch hosts token NAME` gives a host a new token, ending the old one at
+once, and `cronwatch hosts remove NAME` deletes a host and its report. When
+reports fail, `serve` logs it once, and again when they are delivered.
 
 ## Crontab sync
 

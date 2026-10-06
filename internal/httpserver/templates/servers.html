@@ -1,0 +1,53 @@
+{{define "servers.html"}}{{template "head" .}}
+<h1 class="visually-hidden">Servers</h1>
+{{with .Data}}
+<section class="panel table-wrap">
+  <table>
+    <thead><tr><th scope="col">Server</th><th scope="col">Status</th><th scope="col">Last report</th><th scope="col">Jobs</th><th scope="col">CronWatch</th></tr></thead>
+    <tbody>
+    {{- range $i, $h := .Hosts}}
+    <tr{{if eq .Status "stale"}} class="is-stale"{{end}}>
+      <td data-label="Server" class="cell-job"><a href="/servers/{{.Host.Name}}">{{.Host.Name}}</a>{{with .Report}}{{with .Hostname}}<small>{{.}}</small>{{end}}{{end}}</td>
+      <td data-label="Status" class="cell-status">{{template "host_status" .}}</td>
+      <td data-label="Last report">{{if eq $i 0}}<span class="muted">Live</span>{{else if .Host.ReportedAt}}{{elapsed .Age}} ago{{else}}Never{{end}}</td>
+      <td data-label="Jobs">{{with .Report}}{{len .Jobs}}{{else}}—{{end}}</td>
+      <td data-label="CronWatch">{{with .Report}}{{.Cronwatch}}{{else}}—{{end}}</td>
+    </tr>
+    {{- end}}
+    </tbody>
+  </table>
+</section>
+{{if eq (len .Hosts) 1}}<p class="page-note">No other servers report here yet. <code>cronwatch hosts add NAME</code> creates one and prints its token, and <code>cronwatch serve --hub-addr</code> accepts their reports.</p>
+{{else}}<p class="page-note">Servers report every minute. One that has not reported for {{elapsed .StaleAfter}} is stale, and its jobs show what it last reported.</p>{{end}}
+<h2>Jobs on all servers</h2>
+<section class="panel table-wrap">
+  <table>
+    <thead><tr><th scope="col">Server</th><th scope="col">Job</th><th scope="col">Status</th><th scope="col">Last run</th><th scope="col">Next expected</th></tr></thead>
+    <tbody>
+    {{- range .Jobs}}{{template "server_job" .}}{{else}}
+    <tr><td colspan="5" class="empty">No jobs on any server.</td></tr>
+    {{- end}}
+    </tbody>
+  </table>
+</section>
+{{end}}
+{{template "foot"}}{{end}}
+
+{{define "host_status"}}
+{{- if eq .Status "never"}}<span class="status status-never_run">Never reported</span>
+{{- else if eq .Status "stale"}}<span class="status status-missed">Stale</span><small>no report for {{elapsed .Age}}</small>
+{{- else if eq .Status "problems"}}<span class="status status-failed">{{.Problems}} {{if eq .Problems 1}}problem{{else}}problems{{end}}</span>
+{{- else}}<span class="status status-success">OK</span>{{end}}{{end}}
+
+{{define "server_job"}}
+    <tr{{if .Stale}} class="is-stale"{{end}}>
+      <td data-label="Server"><a href="/servers/{{.Host}}">{{.Host}}</a></td>
+      <td data-label="Job" class="cell-job">{{if .LocalID}}<a href="/jobs/{{.LocalID}}">{{.Job.Name}}</a>{{else}}{{.Job.Name}}{{end}}<small>{{.Job.Slug}}</small></td>
+      <td data-label="Status" class="cell-status">{{template "status" .Job.Status}}
+        {{- if .Stale}}<small class="text-warning">as of {{elapsed .Age}} ago</small>{{end}}
+        {{- with .Job.LastRun}}{{if .LastError}}<small><code>{{.LastError}}</code></small>{{else if and .Reason (ne .Status "success")}}<small>{{.Reason}}</small>{{end}}{{end}}
+        {{- with .Job.UndeliveredAlerts}}<small class="text-warning">{{.}} {{if eq . 1}}alert{{else}}alerts{{end}} not delivered</small>{{end}}</td>
+      <td data-label="Last run">{{with .Job.LastRun}}{{template "time" .StartedAt}}{{else}}—{{end}}</td>
+      <td data-label="Next expected">{{with .Job.NextExpectedAt}}{{template "time" .}}{{else}}—{{end}}</td>
+    </tr>
+{{- end}}
