@@ -188,6 +188,7 @@ database. A user-level systemd service example is in
 | [`cronwatch crontab-history`](#cronwatch-crontab-history) | List changes to your crontab |
 | [`cronwatch ping`](#cronwatch-ping) | Record a run of a job you cannot wrap |
 | [`cronwatch check`](#cronwatch-check) | One status line and exit code for monitoring systems |
+| [`cronwatch doctor`](#cronwatch-doctor) | Check the setup and explain what is wrong |
 | [`cronwatch timers`](#cronwatch-timers) | List systemd timers and their last results |
 | [`cronwatch prune`](#cronwatch-prune) | Delete old finished runs |
 | [`cronwatch version`](#cronwatch-version) | Print the version |
@@ -742,6 +743,66 @@ $ echo $?
 
 Over SSH, a remote monitor can run
 `ssh server .local/bin/cronwatch check` and use its exit code.
+
+### `cronwatch doctor`
+
+```sh
+cronwatch doctor [--data-dir DIR]
+```
+
+Checks CronWatch's setup and says what to do about anything wrong. Run it
+when jobs do not show up, missed runs are not reported, or alerts do not
+arrive:
+
+```console
+$ cronwatch doctor
+CronWatch 0.1.0 doctor
+
+User
+  ✓ Running as deploy (uid 1000), home /home/deploy
+
+Data
+  ✓ Data directory /home/deploy/.config/cronwatch (the default)
+  ✓ Database /home/deploy/.config/cronwatch/cronwatch.db: 348 KB, 6 jobs, 308 runs, the oldest from 2026-08-27
+
+Crontab
+  ✓ 5 scheduled lines, 4 run through cronwatch run
+  ✗ Line 4 records to /srv/cronwatch, not /home/deploy/.config/cronwatch, which this doctor (and serve, run the same way) reads
+      Set CRONWATCH_DATA_DIR in the crontab to match, or pass the same --data-dir to cronwatch commands.
+  ! 1 line is not monitored: line 7
+      cronwatch sync --wrap shows how to wrap them.
+
+Missed-run detection
+  ✗ Missed runs have never been checked, so they are not reported
+      Run cronwatch serve (for example as a systemd user service), or schedule: * * * * * cronwatch check >/dev/null
+
+Jobs and alerts
+  ✓ 6 jobs, 2 with an --on-failure or --on-recover hook
+
+2 problems, 1 warning.
+```
+
+It checks:
+
+- **User**: who you are, and a warning if you are root, whose data directory
+  is not the one your own crontab's jobs record to.
+- **Data**: the data directory and where its path came from (`--data-dir`,
+  `$CRONWATCH_DATA_DIR` or the default), its owner and permissions, free disk
+  space, and that the database opens and passes SQLite's quick integrity check.
+  It never creates the data directory.
+- **Crontab**: that cron can find each line's `cronwatch` on the crontab's
+  `PATH`, that each line records to this data directory (a
+  `CRONWATCH_DATA_DIR` set in your shell but not in the crontab is a common
+  reason jobs never appear), and which lines are not monitored.
+- **Missed-run detection**: whether a cron daemon and a `cronwatch serve` for
+  this data directory are running (on Linux), and when missed runs were last
+  checked. `serve` checks every minute; `check`, `jobs`, `runs` and `prune`
+  check too.
+- **Jobs and alerts**: paused and archived jobs, jobs without a schedule, and
+  alerts that could not be delivered.
+
+✗ marks a problem, ! a warning and · a note. `doctor` exits 1 if it finds a
+problem, so it can run in scripts.
 
 ### `cronwatch pause`, `resume` and `archive`
 

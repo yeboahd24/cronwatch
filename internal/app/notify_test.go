@@ -287,3 +287,11 @@ func TestSyncTakesHooksFromCrontab(t *testing.T) {
 		t.Fatalf("hook kept after removal: %q", job.OnFailure)
 	}
 }
+
+func TestShortDuration(t *testing.T) {
+	for d, want := range map[time.Duration]string{time.Minute: "1m", time.Hour: "1h", 90 * time.Minute: "1h30m", 20 * time.Second: "20s", 0: "0s", 61 * time.Second: "1m1s"} {
+		if got := shortDuration(d); got != want {
+			t.Errorf("shortDuration(%v) = %q, want %q", d, got, want)
+		}
+	}
+}
