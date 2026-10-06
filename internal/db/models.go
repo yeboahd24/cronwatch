@@ -59,6 +59,7 @@ type Job struct {
 	MissedCheckedUntil sql.NullString
 	OnFailure          sql.NullString
 	OnRecover          sql.NullString
+	MaxDurationSeconds sql.NullInt64
 }
 
 type MissedOccurrence struct {

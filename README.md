@@ -288,7 +288,7 @@ command gets the details in environment variables:
 | --- | --- |
 | `CRONWATCH_EVENT` | `failed`, `timeout`, `missed` or `recovered` |
 | `CRONWATCH_JOB_NAME`, `CRONWATCH_JOB_SLUG` | The job |
-| `CRONWATCH_STATUS`, `CRONWATCH_EXIT_CODE` | The run's status and exit code |
+| `CRONWATCH_STATUS`, `CRONWATCH_EXIT_CODE` | The run's status and exit code. The exit code is unset when there is none: a missed run, or a pinged run that timed out waiting for its end ping |
 | `CRONWATCH_REASON` | Why a rule marked the run failed, if one did |
 | `CRONWATCH_LAST_ERROR` | The last line the command wrote to stderr |
 | `CRONWATCH_RUN_ID`, `CRONWATCH_STARTED_AT` | The run, for `/runs/RUN-ID` on the dashboard |
@@ -324,8 +324,8 @@ The job page lists the job's alerts, with each one's delivery status and last
 error, and the run page shows the alert the run raised. The jobs list flags
 jobs with alerts that failed and have not been delivered.
 
-Missed runs are detected by `cronwatch serve` (or `jobs`, `runs`, `prune`), so
-their alerts need one of those running.
+Missed runs are detected by `cronwatch serve` (or `check`, `jobs`, `runs`,
+`prune`), so their alerts need one of those running.
 
 ### `cronwatch serve`
 
@@ -578,7 +578,7 @@ it, and `prune --older-than` deletes old copies but always keeps the newest.
 ### `cronwatch ping`
 
 ```sh
-cronwatch ping [--start | --fail] [--message TEXT] [--exit-code N] JOB-SLUG
+cronwatch ping [--start | --fail] [--message TEXT] [--exit-code N] [--max-duration DURATION] JOB-SLUG
 ```
 
 Records a run of a job that cannot be wrapped with `cronwatch run`, such as a
@@ -595,9 +595,25 @@ cronwatch ping --start nightly-etl
 
 The job is created on its first ping; pass `--name`, `--schedule` and
 `--grace` to name it and to have missed pings detected. Hooks, failure types
-and the dashboard treat pinged runs like wrapped ones. A `--start` that never
-gets its end ping stays **running** until the next `--start`, which records
-it as failed.
+and the dashboard treat pinged runs like wrapped ones.
+
+A `--start` that never gets its end ping stays **running** until the next
+`--start`, which records it as failed. Pass `--max-duration` to stop waiting
+sooner: a run that goes longer than that without its end ping is recorded as
+**timed out**, and `--on-failure` runs with `CRONWATCH_EVENT=timeout`, without
+waiting for the job to run again. `cronwatch serve` checks every minute, and
+`check`, `jobs`, `runs`, `prune` and the job's own pings check too, so the
+result is the same whichever notices first. Something has to be running to
+notice a ping that never comes: run `cronwatch serve`, or, without it,
+schedule `cronwatch check` from your monitor or from cron
+(`* * * * * cronwatch check >/dev/null`). Missed runs are detected the same
+way. An end ping that arrives after the run timed out records a separate run.
+The limit is kept on the job like `--schedule`: pass it once, and
+`--max-duration 0` removes it.
+
+```sh
+cronwatch ping --start --max-duration 2h nightly-etl
+```
 
 ### `cronwatch check`
 

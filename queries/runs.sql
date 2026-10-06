@@ -126,3 +126,12 @@ ORDER BY started_at DESC LIMIT ?;
 -- The newest heartbeat run still waiting for its end ping.
 SELECT * FROM runs WHERE job_id = ? AND status = 'running' AND pid IS NULL
 ORDER BY started_at DESC LIMIT 1;
+
+-- name: ListOpenHeartbeatRunsWithLimit :many
+-- Heartbeat runs still waiting for their end ping, of jobs with a
+-- --max-duration, oldest first.
+SELECT sqlc.embed(runs), jobs.max_duration_seconds
+FROM runs JOIN jobs ON jobs.id = runs.job_id
+WHERE runs.status = 'running' AND runs.pid IS NULL AND jobs.max_duration_seconds IS NOT NULL
+  AND (sqlc.narg(job_id) IS NULL OR runs.job_id = sqlc.narg(job_id))
+ORDER BY runs.started_at;

@@ -32,7 +32,7 @@ func parseTime(value string) (time.Time, error) { return time.Parse(time.RFC3339
 
 func convertJob(row db.Job) (model.Job, error) {
 	j := model.Job{ID: row.ID, Slug: row.Slug, Name: row.Name, Command: row.Command, GraceSeconds: row.GraceSeconds,
-		OnFailure: row.OnFailure.String, OnRecover: row.OnRecover.String}
+		OnFailure: row.OnFailure.String, OnRecover: row.OnRecover.String, MaxDurationSeconds: row.MaxDurationSeconds.Int64}
 	if row.Schedule.Valid {
 		j.Schedule = &row.Schedule.String
 	}
@@ -90,13 +90,15 @@ func convertRun(row db.Run) (model.Run, error) {
 // DefaultGrace is the missed-run grace period for jobs that never set one.
 const DefaultGrace = 5 * time.Minute
 
-// JobSpec describes a job registration. A nil Schedule, Grace or hook keeps
-// the stored value, so an ad-hoc run without flags does not reset the job.
+// JobSpec describes a job registration. A nil Schedule, Grace, hook or
+// MaxDuration keeps the stored value, so an ad-hoc run without flags does not
+// reset the job.
 type JobSpec struct {
 	Slug, Name, Command  string
 	Schedule             *string
 	Grace                *time.Duration
 	OnFailure, OnRecover *string
+	MaxDuration          *time.Duration // 0 removes the limit
 }
 
 func (s *Store) UpsertJob(ctx context.Context, spec JobSpec) (model.Job, error) {
@@ -106,7 +108,8 @@ func (s *Store) UpsertJob(ctx context.Context, spec JobSpec) (model.Job, error) 
 	}
 	expression, grace := "", DefaultGrace
 	var onFailure, onRecover string
-	if spec.Schedule == nil || spec.Grace == nil || spec.OnFailure == nil || spec.OnRecover == nil {
+	var maxDuration int64
+	if spec.Schedule == nil || spec.Grace == nil || spec.OnFailure == nil || spec.OnRecover == nil || spec.MaxDuration == nil {
 		existing, err := s.GetJobBySlug(ctx, spec.Slug)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return model.Job{}, err
@@ -117,7 +120,11 @@ func (s *Store) UpsertJob(ctx context.Context, spec JobSpec) (model.Job, error) 
 			}
 			grace = time.Duration(existing.GraceSeconds) * time.Second
 			onFailure, onRecover = existing.OnFailure, existing.OnRecover
+			maxDuration = existing.MaxDurationSeconds
 		}
+	}
+	if spec.MaxDuration != nil {
+		maxDuration = int64(*spec.MaxDuration / time.Second)
 	}
 	if spec.OnFailure != nil {
 		onFailure = *spec.OnFailure
@@ -135,7 +142,7 @@ func (s *Store) UpsertJob(ctx context.Context, spec JobSpec) (model.Job, error) 
 	err = db.New(s.DB).UpsertJob(ctx, db.UpsertJobParams{ID: id, Slug: spec.Slug, Name: spec.Name, Command: spec.Command,
 		Schedule: sql.NullString{String: expression, Valid: expression != ""}, GraceSeconds: int64(grace / time.Second),
 		OnFailure: sql.NullString{String: onFailure, Valid: onFailure != ""}, OnRecover: sql.NullString{String: onRecover, Valid: onRecover != ""},
-		CreatedAt: now, UpdatedAt: now})
+		MaxDurationSeconds: sql.NullInt64{Int64: maxDuration, Valid: maxDuration > 0}, CreatedAt: now, UpdatedAt: now})
 	if err != nil {
 		return model.Job{}, err
 	}

@@ -11,6 +11,7 @@
     <dt>Schedule</dt><dd>{{if .View.Schedule}}<code>{{.View.Schedule}}</code>{{else}}<span class="muted">None — runs are recorded but not checked for misses</span>{{end}}</dd>
     {{if .View.Schedule}}<dt>Grace</dt><dd>{{seconds .View.GraceSeconds}}</dd>
     <dt>Next expected</dt><dd>{{if .View.NextExpectedAt}}{{template "time" .View.NextExpectedAt}}{{else}}—{{end}}</dd>{{end}}
+    {{if .View.MaxDurationSeconds}}<dt>Max duration</dt><dd>{{seconds .View.MaxDurationSeconds}} from <code>ping --start</code> to its end ping</dd>{{end}}
     {{if .View.MissedAt}}<dt>Missed</dt><dd class="text-warning">Expected {{template "time" .View.MissedAt}}, no run started</dd>{{end}}
   </dl>
 </section>

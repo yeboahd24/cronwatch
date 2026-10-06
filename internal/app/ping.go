@@ -30,6 +30,7 @@ func pingCommand(ctx context.Context, args []string, stdout, stderr io.Writer) e
 	name := fs.String("name", "", "job `name` for a new job (default: the slug)")
 	expr := fs.String("schedule", "", "five-field cron `expression` CronWatch should expect the job on")
 	grace := fs.Duration("grace", storage.DefaultGrace, "how late a run may start before it counts as missed")
+	maxDuration := fs.Duration("max-duration", 0, "how long a run started with --start may go without its end ping before it is recorded as timed out (0 removes the limit)")
 	if err := parseFlags(fs, args, stdout); err != nil {
 		return err
 	}
@@ -47,6 +48,9 @@ func pingCommand(ctx context.Context, args []string, stdout, stderr io.Writer) e
 		if err := schedule.Validate(*expr, time.Now()); err != nil {
 			return err
 		}
+	}
+	if *maxDuration < 0 || (*maxDuration > 0 && *maxDuration < time.Second) {
+		return errors.New("--max-duration must be 0 or at least 1s")
 	}
 	if *dir == "" {
 		cfg, err := config.Load()
@@ -76,6 +80,8 @@ func pingCommand(ctx context.Context, args []string, stdout, stderr io.Writer) e
 			spec.Schedule = expr
 		case "grace":
 			spec.Grace = grace
+		case "max-duration":
+			spec.MaxDuration = maxDuration
 		}
 	})
 	for _, h := range []struct {
@@ -92,6 +98,9 @@ func pingCommand(ctx context.Context, args []string, stdout, stderr io.Writer) e
 	}
 
 	now := time.Now().UTC()
+	// A run past its --max-duration has timed out, whether or not another
+	// process noticed before this ping did.
+	expireHeartbeats(ctx, s, job.ID, now, stderr)
 	open, err := s.OpenHeartbeatRun(ctx, job.ID)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
@@ -149,4 +158,22 @@ func pingCommand(ctx context.Context, args []string, stdout, stderr io.Writer) e
 		notifyRun(ctx, s, job, finished, stderr)
 	}
 	return nil
+}
+
+// expireHeartbeats records as timed out the heartbeat runs of the job with
+// jobID, or of every job if jobID is "", that have gone longer than the job's
+// --max-duration without an end ping, and queues their alerts.
+func expireHeartbeats(ctx context.Context, s *storage.Store, jobID string, now time.Time, stderr io.Writer) {
+	expired, err := s.ExpireHeartbeatRuns(ctx, jobID, now)
+	if err != nil {
+		fmt.Fprintf(stderr, "cronwatch: warning: could not time out heartbeat runs: %v\n", err)
+	}
+	for _, run := range expired {
+		job, err := s.GetJob(ctx, run.JobID)
+		if err != nil {
+			fmt.Fprintf(stderr, "cronwatch: warning: could not read a timed-out run's job: %v\n", err)
+			continue
+		}
+		notifyRun(ctx, s, job, run, stderr)
+	}
 }
