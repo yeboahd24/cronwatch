@@ -74,7 +74,10 @@ jobs and logs; it cannot execute commands.
   expected run, and refreshes every 10 seconds. Below it, **Recent logs** shows
   the end of the latest failing run's output (or the latest run when nothing
   is failing). Lines the command wrote to stderr are shown in red.
-- **Runs** lists recent runs across all jobs. A run's page shows its last error,
+- **Runs** lists runs across all jobs, newest first, 100 to a page; **Older**
+  goes further back. Filter by job, status and the days runs started (in local
+  time). The filters are in the URL, so a filtered list can be bookmarked, and
+  each job's page links to its own runs. A run's page shows its last error,
   and its output opens at the end, with All / Stdout / Stderr views. Below the
   output is the environment the run started in. When a run fails and its
   environment differs from the last successful run's, a notice at the top
@@ -95,8 +98,9 @@ jobs and logs; it cannot execute commands.
   error is **new** or how many earlier runs failed the same way and when it
   was first seen; a job's page lists each failure type with its count, first
   and last time.
-- **Logs** searches the output of the last 50 runs; **Errors only** limits
-  results to stderr lines. A run's page has a **Download** link for its
+- **Logs** searches run output, 50 runs to a page, with **Older** for the
+  runs before them and the same job, status and date filters as Runs;
+  **Errors only** limits results to stderr lines. A run's page has a **Download** link for its
   output as a `.log` file (the whole output, or the stream you are viewing).
 - **Timeline** shows every job's runs over the last 24 hours or 7 days, one row
   per job, with expected run times and missed runs, so failures, gaps and jobs
@@ -451,7 +455,9 @@ $ cronwatch jobs --json
 
 ### `cronwatch runs`
 
-Lists the 100 most recent runs, optionally for one job by its slug:
+Lists the most recent runs, newest first, optionally for one job by its slug.
+`--status failed` lists runs with one status, `--since 24h` only recent ones,
+and `--limit N` changes how many are listed (100 by default, 0 for all):
 
 ```console
 $ cronwatch runs database-backup

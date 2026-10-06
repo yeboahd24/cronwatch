@@ -109,7 +109,7 @@ Usage:
   cronwatch run [flags] -- command [args...]
   cronwatch serve [flags]
   cronwatch jobs [--all]
-  cronwatch runs [job]
+  cronwatch runs [--status S] [--since DURATION] [--limit N] [job]
   cronwatch prune [--keep N] [--older-than DURATION]
   cronwatch sync [--crontab FILE]
   cronwatch envdiff [--last-success] JOB-SLUG | --run RUN-ID

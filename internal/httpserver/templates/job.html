@@ -75,7 +75,10 @@
   </ul>
 </section>
 {{end}}
-<h2>Recent runs</h2>
+<div class="section-head">
+  <h2>Recent runs</h2>
+  <a class="panel-link" href="/runs?job={{.View.Slug}}">Filter and browse all runs <span aria-hidden="true">→</span></a>
+</div>
 <section class="panel table-wrap">
   <table>
     <thead><tr><th scope="col">Started</th><th scope="col">Status</th><th scope="col">Duration</th><th scope="col">Peak memory</th><th scope="col">Exit code</th></tr></thead>

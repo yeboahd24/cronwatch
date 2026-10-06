@@ -187,3 +187,38 @@ func TestHelpForEveryCommand(t *testing.T) {
 		t.Fatalf("bad flag error = %v", err)
 	}
 }
+
+func TestRunsFilters(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	for _, script := range []string{"true", "false", "true", "false", "true"} {
+		err := Run(ctx, []string{"run", "--data-dir", dir, "--name", "Job", "--", script}, &bytes.Buffer{}, &bytes.Buffer{})
+		if _, isExit := errors.AsType[*ExitError](err); err != nil && !isExit {
+			t.Fatal(err)
+		}
+	}
+	count := func(args ...string) int {
+		t.Helper()
+		var out bytes.Buffer
+		if err := Run(ctx, append([]string{"runs", "--data-dir", dir}, args...), &out, &bytes.Buffer{}); err != nil {
+			t.Fatalf("runs %v: %v", args, err)
+		}
+		return strings.Count(out.String(), "\n") - 1 // less the header
+	}
+	for _, tc := range []struct {
+		args []string
+		want int
+	}{
+		{nil, 5}, {[]string{"--status", "failed"}, 2}, {[]string{"--limit", "3"}, 3}, {[]string{"--limit", "0"}, 5},
+		{[]string{"--since", "1h", "--status", "success", "job"}, 3},
+	} {
+		if got := count(tc.args...); got != tc.want {
+			t.Errorf("runs %v: %d runs, want %d", tc.args, got, tc.want)
+		}
+	}
+	for _, bad := range [][]string{{"--status", "bogus"}, {"--limit", "-1"}, {"nope"}} {
+		if err := Run(ctx, append([]string{"runs", "--data-dir", dir}, bad...), &bytes.Buffer{}, &bytes.Buffer{}); err == nil {
+			t.Errorf("runs %v accepted", bad)
+		}
+	}
+}

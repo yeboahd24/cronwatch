@@ -164,7 +164,7 @@ func TestDashboardAndLogPages(t *testing.T) {
 	}
 
 	logsPage := get(t, server, "/logs?q=REFUSED")
-	if !strings.Contains(logsPage, "connection refused") || strings.Contains(logsPage, "Database Backup") {
+	if !strings.Contains(logsPage, "connection refused") || strings.Contains(logsPage, `href="/runs/`+okRun.ID+`"`) {
 		t.Fatal("log search returned wrong runs")
 	}
 	if errorsOnly := get(t, server, "/logs?errors=1"); strings.Contains(errorsOnly, "loading config") || !strings.Contains(errorsOnly, "connection refused") {

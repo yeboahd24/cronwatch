@@ -3,9 +3,13 @@
 {{with .Data}}
 <form class="log-search" method="get" action="/logs" role="search">
   <label class="visually-hidden" for="log-query">Search output</label>
-  <input id="log-query" name="q" type="search" value="{{.Query}}" placeholder="Search output of recent runs" autocomplete="off">
-  <label class="check"><input type="checkbox" name="errors" value="1"{{if .OnlyErrors}} checked{{end}}> Errors only</label>
+  <input id="log-query" name="q" type="search" value="{{.Filter.Query}}" placeholder="Search run output" autocomplete="off">
+  <label class="check"><input type="checkbox" name="errors" value="1"{{if .Filter.OnlyErrors}} checked{{end}}> Errors only</label>
   <button type="submit">Search</button>
+  <div class="history-filter">
+    {{template "history_fields" .Filter}}
+    {{if .Filter.Active}}<a class="clear" href="/logs">Clear</a>{{end}}
+  </div>
 </form>
 {{range .Results}}
 <section class="panel log-result">
@@ -16,10 +20,15 @@
     <a class="panel-link" href="/runs/{{.Run.ID}}">Open run <span aria-hidden="true">→</span></a>
   </div>
   <div class="log-viewer">{{template "loglines" .Lines}}</div>
-  {{if .Hidden}}<p class="more"><a href="/runs/{{.Run.ID}}">{{.Hidden}} more {{if or $.Data.Query $.Data.OnlyErrors}}matching {{end}}lines</a></p>{{end}}
+  {{if .Hidden}}<p class="more"><a href="/runs/{{.Run.ID}}">{{.Hidden}} more {{if or $.Data.Filter.Query $.Data.Filter.OnlyErrors}}matching {{end}}lines</a></p>{{end}}
 </section>
 {{else}}
-<section class="panel"><p class="empty">{{if or .Query .OnlyErrors}}No matching lines in the last 50 runs.{{else}}No output recorded yet.{{end}}</p></section>
+<section class="panel"><p class="empty">
+  {{- if .Pager.Older}}No matching lines in these {{.Scanned}} runs; older runs may have some.
+  {{- else if .Filter.Active}}No matching lines.
+  {{- else if .Filter.Paged}}No older output.
+  {{- else}}No output recorded yet.{{end}}</p></section>
 {{end}}
+{{template "pager" .Pager}}
 {{end}}
 {{template "foot"}}{{end}}

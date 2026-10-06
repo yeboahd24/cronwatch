@@ -26,10 +26,10 @@ var assets embed.FS
 
 const (
 	recentLogLines  = 12  // lines in the dashboard's Recent logs panel
-	logSearchRuns   = 50  // runs scanned by the Logs page
+	logSearchRuns   = 50  // runs searched per page of the Logs page
 	logResultLines  = 20  // matching lines shown per run on the Logs page
 	logPreviewLines = 6   // lines shown per run on the Logs page without a query
-	runListLimit    = 100 // runs listed on the Runs and job pages
+	runListLimit    = 100 // runs per page of the Runs page, and on job pages
 )
 
 type Server struct {
@@ -474,40 +474,55 @@ func (s *Server) loadRunEnv(r *http.Request, run model.Run) (*runEnv, error) {
 }
 
 func (s *Server) handleRuns(w http.ResponseWriter, r *http.Request) {
-	items, err := s.Store.ListRunsWithJob(r.Context(), runListLimit)
+	f, err := s.parseHistoryFilter(r)
+	if err != nil {
+		filterError(w, err)
+		return
+	}
+	runs, err := s.Store.ListRunsPage(r.Context(), f.filter, f.cursor, runListLimit+1)
 	if err != nil {
 		queryError(w, err)
 		return
 	}
-	s.render(w, "runs.html", page{Title: "Runs", Tab: "runs", Data: items})
+	runs, p := f.page("/runs", runs, runListLimit)
+	s.render(w, "runs.html", page{Title: "Runs", Tab: "runs", Data: struct {
+		Filter historyFilter
+		Runs   []storage.RunWithJob
+		Pager  pager
+	}{f, runs, p}})
 }
 
-// handleLogs searches recent run output. Without a query it previews the end
-// of each recent run; "errors" limits matches to stderr lines.
+// handleLogs searches run output, a page of runs at a time. Without a query
+// it previews the end of each run; "errors" limits matches to stderr lines.
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
-	query := strings.TrimSpace(r.URL.Query().Get("q"))
-	onlyErrors := r.URL.Query().Get("errors") == "1"
-	runs, err := s.Store.SearchRunLogs(r.Context(), query, logSearchRuns)
+	f, err := s.parseHistoryFilter(r)
+	if err != nil {
+		filterError(w, err)
+		return
+	}
+	runs, err := s.Store.SearchRunLogs(r.Context(), f.Query, f.filter, f.cursor, logSearchRuns+1)
 	if err != nil {
 		queryError(w, err)
 		return
 	}
+	runs, p := f.page("/logs", runs, logSearchRuns)
 	results := make([]logExcerpt, 0, len(runs))
 	for _, item := range runs {
-		lines := logs.Filter(logs.Parse(item.Run.CombinedLog), onlyErrors, query)
+		lines := logs.Filter(logs.Parse(item.Run.CombinedLog), f.OnlyErrors, f.Query)
 		if len(lines) == 0 {
 			continue
 		}
 		limit := logResultLines
-		if query == "" && !onlyErrors {
+		if f.Query == "" && !f.OnlyErrors {
 			limit = logPreviewLines
 		}
 		shown := logs.Tail(lines, limit)
 		results = append(results, logExcerpt{Run: item.Run, JobName: item.JobName, Lines: shown, Hidden: len(lines) - len(shown)})
 	}
 	s.render(w, "logs.html", page{Title: "Logs", Tab: "logs", Data: struct {
-		Query      string
-		OnlyErrors bool
-		Results    []logExcerpt
-	}{query, onlyErrors, results}})
+		Filter  historyFilter
+		Scanned int // runs searched on this page
+		Results []logExcerpt
+		Pager   pager
+	}{f, len(runs), results, p}})
 }
