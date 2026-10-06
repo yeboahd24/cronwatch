@@ -144,8 +144,9 @@ func queryError(w http.ResponseWriter, err error) {
 }
 
 type dashboard struct {
-	Jobs   []jobRow
-	Recent *logExcerpt
+	Jobs     []jobRow
+	Archived []model.JobView
+	Recent   *logExcerpt
 }
 
 // jobRow is a job on the jobs list with its recent durations.
@@ -168,6 +169,10 @@ func (s *Server) loadDashboard(r *http.Request) (dashboard, error) {
 	}
 	d := dashboard{}
 	for _, j := range jobs {
+		if j.ArchivedAt != nil {
+			d.Archived = append(d.Archived, j)
+			continue
+		}
 		trend, err := s.Store.JobTrend(r.Context(), j.ID, listSparkRuns, s.now())
 		if err != nil {
 			return dashboard{}, err

@@ -20,6 +20,21 @@ type Job struct {
 	// MaxDurationSeconds is how long a heartbeat run may wait for its end
 	// ping before it is recorded as timed out; 0 means no limit.
 	MaxDurationSeconds int64
+	// PausedAt is when the job was paused, until PausedUntil if that is set;
+	// ArchivedAt is when it was archived. A paused or archived job is not
+	// monitored: it is not checked for missed runs and raises no alerts.
+	PausedAt, PausedUntil, ArchivedAt *time.Time
+}
+
+// Paused reports whether a pause is in effect at now.
+func (j Job) Paused(now time.Time) bool {
+	return j.PausedAt != nil && (j.PausedUntil == nil || now.Before(*j.PausedUntil))
+}
+
+// Monitored reports whether the job is checked for missed runs and raises
+// alerts at now: it is neither archived nor paused.
+func (j Job) Monitored(now time.Time) bool {
+	return j.ArchivedAt == nil && !j.Paused(now)
 }
 
 type Run struct {
@@ -59,6 +74,17 @@ type Usage struct {
 
 // Failing reports whether a run status counts as a failure.
 func Failing(status string) bool { return status == "failed" || status == "timeout" }
+
+// Unarchived returns views without the archived jobs, which job lists leave out.
+func Unarchived(views []JobView) []JobView {
+	out := make([]JobView, 0, len(views))
+	for _, v := range views {
+		if v.ArchivedAt == nil {
+			out = append(out, v)
+		}
+	}
+	return out
+}
 
 type JobView struct {
 	Job

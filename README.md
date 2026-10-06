@@ -177,6 +177,7 @@ database. A user-level systemd service example is in
 | [`cronwatch jobs`](#cronwatch-jobs) | List jobs and their current status |
 | [`cronwatch runs`](#cronwatch-runs) | List recent runs |
 | [`cronwatch sync`](#cronwatch-sync) | Register jobs from your crontab, and wrap unmonitored lines |
+| [`cronwatch pause`, `resume`, `archive`](#cronwatch-pause-resume-and-archive) | Stop and restart monitoring a job, keeping its history |
 | [`cronwatch envdiff`](#cronwatch-envdiff) | Compare a run's environment with your shell |
 | [`cronwatch try`](#cronwatch-try) | Rerun a job in the environment cron gave it |
 | [`cronwatch digest`](#cronwatch-digest) | Summarize every job, for a daily email |
@@ -399,7 +400,8 @@ To start it at boot from cron:
 
 ### `cronwatch jobs`
 
-Lists every job with its current status:
+Lists every job with its current status. Archived jobs are left out unless
+you pass `--all`:
 
 ```console
 $ cronwatch jobs
@@ -410,8 +412,9 @@ Queue worker      never_run  —                 —
 ```
 
 Statuses: `success`, `failed`, `timeout`, `running`, `cancelled`, `skipped`
-(by `--no-overlap`), `missed` (a scheduled run never started), `never_run`, and
-`invalid_schedule`.
+(by `--no-overlap`), `missed` (a scheduled run never started), `never_run`,
+`invalid_schedule`, and `paused` and `archived` (see
+[pause, resume and archive](#cronwatch-pause-resume-and-archive)).
 
 `--json` prints the jobs as JSON for scripts. Field names are stable, times are
 RFC 3339 in UTC, and missing values are `null`:
@@ -425,6 +428,9 @@ $ cronwatch jobs --json
     "status": "failed",
     "schedule": "0 2 * * *",
     "grace_seconds": 300,
+    "max_duration_seconds": null,
+    "paused_until": null,
+    "archived_at": null,
     "last_run": {
       "id": "fa46bf4ecf0a55ec3b1289236bca48e5",
       "job": "Database Backup",
@@ -722,7 +728,7 @@ problem gets a line of its own:
 
 ```console
 $ cronwatch check
-CRONWATCH CRITICAL - Database Backup failed | jobs=2 critical=1 warning=0 ok=1
+CRONWATCH CRITICAL - Database Backup failed | jobs=2 critical=1 warning=0 ok=1 paused=0
 CRITICAL: Database Backup: failed 2026-10-05 02:00: pg_dump: connection refused
 $ echo $?
 2
@@ -730,6 +736,40 @@ $ echo $?
 
 Over SSH, a remote monitor can run
 `ssh server .local/bin/cronwatch check` and use its exit code.
+
+### `cronwatch pause`, `resume` and `archive`
+
+```sh
+cronwatch pause [--for DURATION] JOB-SLUG...
+cronwatch resume JOB-SLUG...
+cronwatch archive JOB-SLUG...
+```
+
+Stop monitoring a job without losing its history, for maintenance, a job you
+turned off for a while, or one you removed for good:
+
+```console
+$ cronwatch pause --for 4h nightly-backup
+Paused Nightly backup until 2026-10-06 14:00.
+$ cronwatch archive old-report
+Archived Old report. Its runs are kept; resume it to monitor it again.
+```
+
+A paused job is not checked for missed runs and raises no alerts, but its
+runs and pings are still recorded. Its status is **Paused**, which `check`,
+metrics and the digest never count as a problem. With `--for` it resumes by
+itself; otherwise it stays paused until `cronwatch resume`. Missed runs are
+checked from the moment it resumes, so the time it was paused is never
+reported as missed. Alerts that were already waiting to be delivered are
+still delivered.
+
+An archived job is paused and also left off the jobs list, `jobs`, `check`,
+the digest, the timeline and metrics. The dashboard lists archived jobs under
+the jobs table, each with its job page and runs; `jobs --all` and
+`check JOB-SLUG` include them. `resume` brings back a paused or archived job.
+
+A job whose line you remove from your crontab is unscheduled by
+[crontab sync](#crontab-sync) without pausing or archiving it.
 
 ### `cronwatch timers`
 

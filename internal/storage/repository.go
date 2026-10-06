@@ -45,6 +45,14 @@ func convertJob(row db.Job) (model.Job, error) {
 	if err != nil {
 		return j, err
 	}
+	for _, t := range []struct {
+		dst **time.Time
+		v   sql.NullString
+	}{{&j.PausedAt, row.PausedAt}, {&j.PausedUntil, row.PausedUntil}, {&j.ArchivedAt, row.ArchivedAt}} {
+		if *t.dst, err = parseNullTime(t.v); err != nil {
+			return j, err
+		}
+	}
 	if row.MissedCheckedUntil.Valid {
 		checked, err := parseTime(row.MissedCheckedUntil.String)
 		if err != nil {
@@ -370,6 +378,15 @@ func (s *Store) JobView(ctx context.Context, j model.Job, now time.Time) (model.
 	if len(runs) > 0 {
 		v.LastRun = &runs[0]
 		v.Status = runs[0].Status
+	}
+	// A job that is not monitored is not expected to run.
+	switch {
+	case j.ArchivedAt != nil:
+		v.Status = "archived"
+		return v, nil
+	case j.Paused(now):
+		v.Status = "paused"
+		return v, nil
 	}
 	if j.Schedule == nil {
 		return v, nil

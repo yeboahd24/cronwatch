@@ -217,7 +217,7 @@ code, pre { font-family: var(--mono); font-size: 13px; }
 .status-failed, .status-timeout, .status-invalid_schedule { color: var(--danger); }
 .status-missed { color: var(--warning); }
 .status-running { color: var(--running); }
-.status-cancelled, .status-skipped, .status-never_run { color: var(--muted); }
+.status-cancelled, .status-skipped, .status-never_run, .status-paused, .status-archived { color: var(--muted); }
 
 /* Errors */
 
@@ -395,6 +395,9 @@ code, pre { font-family: var(--mono); font-size: 13px; }
 .history li + li { border-top: 1px solid var(--border); }
 .history time { display: inline-block; min-width: 110px; color: var(--muted); }
 .history code { color: var(--log-text); }
+
+.archived-jobs { margin: 10px 4px 0; color: var(--muted); font-size: 14px; }
+.archived-jobs a { color: inherit; }
 
 /* Alerts */
 

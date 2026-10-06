@@ -40,6 +40,7 @@ func digestCommand(ctx context.Context, args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	views = model.Unarchived(views)
 	activity, err := s.ActivitySince(ctx, now.Add(-*since))
 	if err != nil {
 		return err

@@ -86,6 +86,8 @@ func dispatch(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		return checkCommand(ctx, args[1:], stdout)
 	case "ping":
 		return pingCommand(ctx, args[1:], stdout, stderr)
+	case "pause", "resume", "archive":
+		return jobStateCommand(ctx, args[0], args[1:], stdout)
 	case "timers":
 		return timersCommand(ctx, args[1:], stdout, stderr)
 	case "help", "-h", "--help":
@@ -106,7 +108,7 @@ func printHelp(w io.Writer) {
 Usage:
   cronwatch run [flags] -- command [args...]
   cronwatch serve [flags]
-  cronwatch jobs
+  cronwatch jobs [--all]
   cronwatch runs [job]
   cronwatch prune [--keep N] [--older-than DURATION]
   cronwatch sync [--crontab FILE]
@@ -117,6 +119,9 @@ Usage:
   cronwatch check [JOB-SLUG...]
   cronwatch ping [--start | --fail] JOB-SLUG
   cronwatch timers [--all] [--json]
+  cronwatch pause [--for DURATION] JOB-SLUG...
+  cronwatch resume JOB-SLUG...
+  cronwatch archive JOB-SLUG...
   cronwatch version
 
 Run "cronwatch COMMAND --help" for a command's flags.`)

@@ -40,10 +40,13 @@ type jsonJob struct {
 	Schedule     *string `json:"schedule"`
 	GraceSeconds int64   `json:"grace_seconds"`
 	// MaxDurationSeconds is null when heartbeat runs have no limit.
-	MaxDurationSeconds *int64     `json:"max_duration_seconds"`
-	LastRun            *jsonRun   `json:"last_run"`
-	NextExpectedAt     *time.Time `json:"next_expected_at"`
-	MissedAt           *time.Time `json:"missed_at"`
+	MaxDurationSeconds *int64 `json:"max_duration_seconds"`
+	// PausedUntil is set while a pause with an end is in effect.
+	PausedUntil    *time.Time `json:"paused_until"`
+	ArchivedAt     *time.Time `json:"archived_at"`
+	LastRun        *jsonRun   `json:"last_run"`
+	NextExpectedAt *time.Time `json:"next_expected_at"`
+	MissedAt       *time.Time `json:"missed_at"`
 }
 
 func newJSONJob(v model.JobView) jsonJob {
@@ -63,6 +66,10 @@ func newJSONJob(v model.JobView) jsonJob {
 		return &u
 	}
 	out.NextExpectedAt, out.MissedAt = utc(v.NextExpectedAt), utc(v.MissedAt)
+	if v.Status == "paused" {
+		out.PausedUntil = utc(v.PausedUntil)
+	}
+	out.ArchivedAt = utc(v.ArchivedAt)
 	return out
 }
 

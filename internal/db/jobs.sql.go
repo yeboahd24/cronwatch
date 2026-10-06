@@ -10,8 +10,23 @@ import (
 	"database/sql"
 )
 
+const archiveJob = `-- name: ArchiveJob :exec
+UPDATE jobs SET archived_at = ?, paused_at = NULL, paused_until = NULL, updated_at = ? WHERE id = ?
+`
+
+type ArchiveJobParams struct {
+	ArchivedAt sql.NullString
+	UpdatedAt  string
+	ID         string
+}
+
+func (q *Queries) ArchiveJob(ctx context.Context, arg ArchiveJobParams) error {
+	_, err := q.db.ExecContext(ctx, archiveJob, arg.ArchivedAt, arg.UpdatedAt, arg.ID)
+	return err
+}
+
 const getJob = `-- name: GetJob :one
-SELECT id, slug, name, command, schedule, grace_seconds, created_at, updated_at, missed_checked_until, on_failure, on_recover, max_duration_seconds, in_crontab FROM jobs WHERE id = ?
+SELECT id, slug, name, command, schedule, grace_seconds, created_at, updated_at, missed_checked_until, on_failure, on_recover, max_duration_seconds, in_crontab, paused_at, paused_until, archived_at FROM jobs WHERE id = ?
 `
 
 func (q *Queries) GetJob(ctx context.Context, id string) (Job, error) {
@@ -31,12 +46,15 @@ func (q *Queries) GetJob(ctx context.Context, id string) (Job, error) {
 		&i.OnRecover,
 		&i.MaxDurationSeconds,
 		&i.InCrontab,
+		&i.PausedAt,
+		&i.PausedUntil,
+		&i.ArchivedAt,
 	)
 	return i, err
 }
 
 const getJobBySlug = `-- name: GetJobBySlug :one
-SELECT id, slug, name, command, schedule, grace_seconds, created_at, updated_at, missed_checked_until, on_failure, on_recover, max_duration_seconds, in_crontab FROM jobs WHERE slug = ?
+SELECT id, slug, name, command, schedule, grace_seconds, created_at, updated_at, missed_checked_until, on_failure, on_recover, max_duration_seconds, in_crontab, paused_at, paused_until, archived_at FROM jobs WHERE slug = ?
 `
 
 func (q *Queries) GetJobBySlug(ctx context.Context, slug string) (Job, error) {
@@ -56,12 +74,15 @@ func (q *Queries) GetJobBySlug(ctx context.Context, slug string) (Job, error) {
 		&i.OnRecover,
 		&i.MaxDurationSeconds,
 		&i.InCrontab,
+		&i.PausedAt,
+		&i.PausedUntil,
+		&i.ArchivedAt,
 	)
 	return i, err
 }
 
 const listJobs = `-- name: ListJobs :many
-SELECT id, slug, name, command, schedule, grace_seconds, created_at, updated_at, missed_checked_until, on_failure, on_recover, max_duration_seconds, in_crontab FROM jobs ORDER BY name COLLATE NOCASE
+SELECT id, slug, name, command, schedule, grace_seconds, created_at, updated_at, missed_checked_until, on_failure, on_recover, max_duration_seconds, in_crontab, paused_at, paused_until, archived_at FROM jobs ORDER BY name COLLATE NOCASE
 `
 
 func (q *Queries) ListJobs(ctx context.Context) ([]Job, error) {
@@ -87,6 +108,9 @@ func (q *Queries) ListJobs(ctx context.Context) ([]Job, error) {
 			&i.OnRecover,
 			&i.MaxDurationSeconds,
 			&i.InCrontab,
+			&i.PausedAt,
+			&i.PausedUntil,
+			&i.ArchivedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -102,7 +126,7 @@ func (q *Queries) ListJobs(ctx context.Context) ([]Job, error) {
 }
 
 const listJobsInCrontab = `-- name: ListJobsInCrontab :many
-SELECT id, slug, name, command, schedule, grace_seconds, created_at, updated_at, missed_checked_until, on_failure, on_recover, max_duration_seconds, in_crontab FROM jobs WHERE in_crontab = 1 ORDER BY slug
+SELECT id, slug, name, command, schedule, grace_seconds, created_at, updated_at, missed_checked_until, on_failure, on_recover, max_duration_seconds, in_crontab, paused_at, paused_until, archived_at FROM jobs WHERE in_crontab = 1 ORDER BY slug
 `
 
 func (q *Queries) ListJobsInCrontab(ctx context.Context) ([]Job, error) {
@@ -128,6 +152,9 @@ func (q *Queries) ListJobsInCrontab(ctx context.Context) ([]Job, error) {
 			&i.OnRecover,
 			&i.MaxDurationSeconds,
 			&i.InCrontab,
+			&i.PausedAt,
+			&i.PausedUntil,
+			&i.ArchivedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -151,6 +178,27 @@ func (q *Queries) MarkJobInCrontab(ctx context.Context, slug string) error {
 	return err
 }
 
+const pauseJob = `-- name: PauseJob :exec
+UPDATE jobs SET paused_at = ?, paused_until = ?, updated_at = ? WHERE id = ?
+`
+
+type PauseJobParams struct {
+	PausedAt    sql.NullString
+	PausedUntil sql.NullString
+	UpdatedAt   string
+	ID          string
+}
+
+func (q *Queries) PauseJob(ctx context.Context, arg PauseJobParams) error {
+	_, err := q.db.ExecContext(ctx, pauseJob,
+		arg.PausedAt,
+		arg.PausedUntil,
+		arg.UpdatedAt,
+		arg.ID,
+	)
+	return err
+}
+
 const removeJobFromCrontab = `-- name: RemoveJobFromCrontab :exec
 UPDATE jobs SET in_crontab = 0, schedule = NULL, updated_at = ?,
     missed_checked_until = CASE WHEN schedule IS NULL THEN missed_checked_until ELSE ? END
@@ -166,6 +214,24 @@ type RemoveJobFromCrontabParams struct {
 // The job's line left the crontab: it is no longer expected on a schedule.
 func (q *Queries) RemoveJobFromCrontab(ctx context.Context, arg RemoveJobFromCrontabParams) error {
 	_, err := q.db.ExecContext(ctx, removeJobFromCrontab, arg.UpdatedAt, arg.MissedCheckedUntil, arg.ID)
+	return err
+}
+
+const resumeJob = `-- name: ResumeJob :exec
+UPDATE jobs SET paused_at = NULL, paused_until = NULL, archived_at = NULL,
+    missed_checked_until = ?, updated_at = ?
+WHERE id = ?
+`
+
+type ResumeJobParams struct {
+	MissedCheckedUntil sql.NullString
+	UpdatedAt          string
+	ID                 string
+}
+
+// Missed runs are checked from now, not from before the pause.
+func (q *Queries) ResumeJob(ctx context.Context, arg ResumeJobParams) error {
+	_, err := q.db.ExecContext(ctx, resumeJob, arg.MissedCheckedUntil, arg.UpdatedAt, arg.ID)
 	return err
 }
 
