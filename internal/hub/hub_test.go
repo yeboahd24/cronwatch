@@ -59,7 +59,7 @@ func TestReportsOverTLS(t *testing.T) {
 		t.Fatal(err)
 	}
 	received := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
-	server := httptest.NewTLSServer(Handler(s, func() time.Time { return received }, quietLogger()))
+	server := httptest.NewTLSServer(Handler(s, func() time.Time { return received }, quietLogger(), nil))
 	defer server.Close()
 
 	// The hub's certificate is self-signed: trusted only when given.
@@ -116,7 +116,7 @@ func TestHandlerRejects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := Handler(s, time.Now, quietLogger())
+	handler := Handler(s, time.Now, quietLogger(), nil)
 	valid, _ := json.Marshal(Report{Version: ReportVersion, Jobs: []Job{}})
 	post := func(path, auth string, body []byte) int {
 		req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))

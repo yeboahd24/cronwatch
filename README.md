@@ -800,6 +800,9 @@ The limit is kept on the job like `--schedule`: pass it once, and
 cronwatch ping --start --max-duration 2h nightly-etl
 ```
 
+A machine without CronWatch can ping a hub over HTTP; see
+[Pinging the hub over HTTP](#pinging-the-hub-over-http).
+
 ### `cronwatch check`
 
 ```sh
@@ -982,8 +985,9 @@ summary of its jobs to that CronWatch, the **hub**, every minute; the hub's
 jobs, those needing attention first.
 
 Servers push, so they need only outbound access to the hub and open no ports
-themselves. Only the hub listens, on a port of its own that accepts reports
-and nothing else; its dashboard stays on loopback as usual.
+themselves. Only the hub listens, on a port of its own that accepts reports,
+and with `--accept-pings` [pings](#pinging-the-hub-over-http), and nothing
+else; its dashboard stays on loopback as usual.
 
 **1. On the hub**, add a host for each server. Each gets a token, shown once;
 the hub keeps only its hash, and the token decides which host a report is
@@ -1059,6 +1063,44 @@ web-2  stale       14m ago      3     v0.10.0
 `cronwatch hosts token NAME` gives a host a new token, ending the old one at
 once, and `cronwatch hosts remove NAME` deletes a host and its report. When
 reports fail, `serve` logs it once, and again when they are delivered.
+
+### Pinging the hub over HTTP
+
+A machine without CronWatch, such as a NAS, a container or a CI runner, can
+ping the hub with `curl`, as `cronwatch ping` would. Start the hub with
+`--accept-pings` as well as `--hub-addr`, add a host for the machine, and
+send its token:
+
+```sh
+cronwatch serve --hub-addr :8766 --hub-cert hub.crt --hub-key hub.key --accept-pings
+```
+
+```sh
+TOKEN=$(cat ~/.config/cronwatch/hub-token)
+HUB=https://hub.example:8766/api/v1/ping
+curl -fsS -X POST -H "Authorization: Bearer $TOKEN" "$HUB/nightly-etl/start?name=Nightly%20ETL&schedule=0%202%20*%20*%20*"
+./etl.sh > etl.log 2>&1
+curl -fsS -H "Authorization: Bearer $TOKEN" --data-binary @etl.log "$HUB/nightly-etl/$?"
+```
+
+| Request | Records, like |
+| --- | --- |
+| `POST /api/v1/ping/SLUG` | `cronwatch ping SLUG`: a successful run |
+| `POST /api/v1/ping/SLUG/start` | `cronwatch ping --start SLUG` |
+| `POST /api/v1/ping/SLUG/fail` | `cronwatch ping --fail SLUG` |
+| `POST /api/v1/ping/SLUG/CODE` | A run that exited with `CODE`, 0 to 255: failed unless it is 0 |
+
+The body, up to 1 MiB, is recorded as the run's output, as `--message` is.
+The query takes `name`, `schedule`, `grace` and `max_duration`, which set the
+job like `ping`'s flags. Use `-X POST` when there is no body. The hub answers
+204 when the ping is recorded, 400 with the reason when it is not, and 401
+for an unknown token.
+
+Pinged jobs are the hub's own: they are listed on its **Jobs** tab, with
+missed runs, timeouts and alerts as for any job. Their alerts use the hooks
+set in `serve`'s environment, such as `CRONWATCH_NOTIFY`; a ping cannot set a
+hook. Any host's token can ping any job, so give a token only to machines you
+would let report.
 
 ## Crontab sync
 
