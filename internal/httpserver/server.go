@@ -9,6 +9,8 @@ import (
 	"html/template"
 	"io/fs"
 	"net/http"
+	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -166,7 +168,21 @@ type dashboard struct {
 	Jobs     []jobRow
 	Archived []model.JobView
 	Recent   *logExcerpt
+	// Tags filters the jobs list: only jobs with all of them are shown.
+	// AllTags are the tags of every unarchived job, to filter by.
+	Tags, AllTags []string
 }
+
+// Query is the dashboard's tag filter as a query string, "" without one.
+func (d dashboard) Query() string {
+	if len(d.Tags) == 0 {
+		return ""
+	}
+	return "?" + url.Values{"tag": d.Tags}.Encode()
+}
+
+// Filtered reports whether tag is one the list is filtered by.
+func (d dashboard) Filtered(tag string) bool { return slices.Contains(d.Tags, tag) }
 
 // jobRow is a job on the jobs list with its recent durations.
 type jobRow struct {
@@ -178,6 +194,10 @@ type jobRow struct {
 // loadDashboard returns the job views and the run for the Recent logs panel:
 // the newest last run among currently failing jobs, else the newest run.
 func (s *Server) loadDashboard(r *http.Request) (dashboard, error) {
+	tags, err := model.Tags(r.URL.Query()["tag"])
+	if err != nil {
+		return dashboard{}, errBadRequest(err.Error())
+	}
 	jobs, err := s.Store.ListJobViews(r.Context(), s.now())
 	if err != nil {
 		return dashboard{}, err
@@ -186,8 +206,14 @@ func (s *Server) loadDashboard(r *http.Request) (dashboard, error) {
 	if err != nil {
 		return dashboard{}, err
 	}
-	d := dashboard{}
+	d := dashboard{Tags: tags}
 	for _, j := range jobs {
+		if j.ArchivedAt == nil {
+			d.AllTags = append(d.AllTags, j.Tags...)
+		}
+		if !j.HasTags(tags) {
+			continue
+		}
 		if j.ArchivedAt != nil {
 			d.Archived = append(d.Archived, j)
 			continue
@@ -201,7 +227,17 @@ func (s *Server) loadDashboard(r *http.Request) (dashboard, error) {
 			d.Recent = &logExcerpt{Run: *j.LastRun, JobName: j.Name}
 		}
 	}
-	if d.Recent == nil {
+	slices.Sort(d.AllTags)
+	d.AllTags = slices.Compact(d.AllTags)
+	// A filtered list features the latest run of its own jobs.
+	if d.Recent == nil && len(tags) > 0 {
+		for _, j := range d.Jobs {
+			if j.LastRun != nil && (d.Recent == nil || j.LastRun.StartedAt.After(d.Recent.Run.StartedAt)) {
+				d.Recent = &logExcerpt{Run: *j.LastRun, JobName: j.Name}
+			}
+		}
+	}
+	if d.Recent == nil && len(tags) == 0 {
 		latest, err := s.Store.ListRunsWithJob(r.Context(), 1)
 		if err != nil {
 			return dashboard{}, err
@@ -225,7 +261,7 @@ func (s *Server) loadDashboard(r *http.Request) (dashboard, error) {
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	d, err := s.loadDashboard(r)
 	if err != nil {
-		queryError(w, err)
+		filterError(w, err)
 		return
 	}
 	s.render(w, "index.html", page{Title: "Jobs", Tab: "jobs", Data: d})
@@ -235,7 +271,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDashboardPartial(w http.ResponseWriter, r *http.Request) {
 	d, err := s.loadDashboard(r)
 	if err != nil {
-		queryError(w, err)
+		filterError(w, err)
 		return
 	}
 	s.render(w, "dashboard_live", d)

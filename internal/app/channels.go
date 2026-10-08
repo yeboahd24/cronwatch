@@ -57,11 +57,11 @@ func envHook(lookup func(string) (string, bool), hookEnv string) (hook string, o
 	return "", ok, nil
 }
 
-// urlList is a flag that may be repeated.
-type urlList []string
+// stringList is a flag that may be repeated.
+type stringList []string
 
-func (l *urlList) String() string     { return strings.Join(*l, " ") }
-func (l *urlList) Set(v string) error { *l = append(*l, v); return nil }
+func (l *stringList) String() string     { return strings.Join(*l, " ") }
+func (l *stringList) Set(v string) error { *l = append(*l, v); return nil }
 
 // notifyTimeout bounds all sends together, below hookTimeout, so a slow
 // service fails the hook with its own error instead of the hook timing out.

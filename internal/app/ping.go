@@ -31,6 +31,8 @@ func pingCommand(ctx context.Context, args []string, stdout, stderr io.Writer) e
 	name := fs.String("name", "", "job `name` for a new job (default: the slug)")
 	expr := fs.String("schedule", "", "five-field cron `expression` CronWatch should expect the job on")
 	grace := fs.Duration("grace", storage.DefaultGrace, "how late a run may start before it counts as missed")
+	var tags stringList
+	fs.Var(&tags, "tag", "`tag` to group the job by; repeat or separate with commas for more, and pass \"\" to remove them")
 	maxDuration := fs.Duration("max-duration", 0, "how long a run started with --start may go without its end ping before it is recorded as timed out (0 removes the limit)")
 	if err := parseFlags(fs, args, stdout); err != nil {
 		return err
@@ -51,6 +53,9 @@ func pingCommand(ctx context.Context, args []string, stdout, stderr io.Writer) e
 			p.MaxDuration = maxDuration
 		}
 	})
+	if tags != nil {
+		p.Tags = []string(tags)
+	}
 	if err := p.check(); err != nil {
 		return err
 	}
@@ -83,6 +88,7 @@ type pingRequest struct {
 	Schedule    *string
 	Grace       *time.Duration
 	MaxDuration *time.Duration
+	Tags        []string // nil leaves them; empty removes them
 }
 
 // check reports what is wrong with p, before anything is recorded.
@@ -107,6 +113,9 @@ func (p pingRequest) check() error {
 	if d := p.MaxDuration; d != nil && (*d < 0 || (*d > 0 && *d < time.Second)) {
 		return errors.New("--max-duration must be 0 or at least 1s")
 	}
+	if _, err := model.Tags(p.Tags); err != nil {
+		return fmt.Errorf("--%w", err)
+	}
 	return nil
 }
 
@@ -124,6 +133,10 @@ func recordPing(ctx context.Context, runs lifecycle, p pingRequest) (model.Job, 
 	}
 	if p.Name != nil {
 		spec.Name = *p.Name
+	}
+	if p.Tags != nil {
+		tags, _ := model.Tags(p.Tags) // check has accepted them
+		spec.Tags = &tags
 	}
 	for _, h := range []struct {
 		dst **string
@@ -198,7 +211,7 @@ func recordPing(ctx context.Context, runs lifecycle, p pingRequest) (model.Job, 
 func hubPings(ctx context.Context, s *storage.Store, stderr io.Writer) hub.PingFunc {
 	return func(reqCtx context.Context, hp hub.Ping) error {
 		p := pingRequest{Slug: hp.Slug, Start: hp.Start, Fail: hp.Fail, ExitCode: hp.ExitCode, Message: hp.Message,
-			Name: hp.Name, Schedule: hp.Schedule, Grace: hp.Grace, MaxDuration: hp.MaxDuration}
+			Name: hp.Name, Schedule: hp.Schedule, Grace: hp.Grace, MaxDuration: hp.MaxDuration, Tags: hp.Tags}
 		if err := p.check(); err != nil {
 			return fmt.Errorf("%w: %v", hub.ErrBadPing, err)
 		}

@@ -73,6 +73,7 @@ type Job struct {
 	PausedAt           sql.NullString
 	PausedUntil        sql.NullString
 	ArchivedAt         sql.NullString
+	Tags               string
 }
 
 type Meta struct {

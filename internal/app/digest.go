@@ -15,14 +15,20 @@ import (
 )
 
 func digestCommand(ctx context.Context, args []string, stdout io.Writer) error {
-	fs := newFlagSet("digest", "cronwatch digest [--since DURATION] [--quiet]",
+	fs := newFlagSet("digest", "cronwatch digest [--since DURATION] [--quiet] [--tag TAG]",
 		"Print a plain-text summary of every job: what needs attention now, and runs, failures and\n"+
 			"missed runs in the period. Run it from cron and cron's MAILTO emails it to you.")
 	dir := fs.String("data-dir", "", "data directory")
 	since := fs.Duration("since", 24*time.Hour, "length of the period to summarize")
 	quiet := fs.Bool("quiet", false, "print nothing when no job failed, timed out or missed a run in the period and none is failing now")
+	var tagFlags stringList
+	fs.Var(&tagFlags, "tag", "only jobs with this `tag`; repeat for jobs with all of them")
 	if err := parseFlags(fs, args, stdout); err != nil {
 		return err
+	}
+	tags, err := model.Tags(tagFlags)
+	if err != nil {
+		return fmt.Errorf("--%w", err)
 	}
 	if fs.NArg() != 0 {
 		return errors.New("digest takes no arguments")
@@ -40,7 +46,7 @@ func digestCommand(ctx context.Context, args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	views = model.Unarchived(views)
+	views = model.WithTags(model.Unarchived(views), tags)
 	activity, err := s.ActivitySince(ctx, now.Add(-*since))
 	if err != nil {
 		return err

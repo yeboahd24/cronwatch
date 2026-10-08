@@ -2,6 +2,10 @@
 <h1 class="visually-hidden">Jobs</h1>
 {{with .Data}}
 <p class="refresh-status" id="refresh-status" role="status">Updates every 10 seconds.</p>
+{{if .AllTags}}<nav class="tag-filter" aria-label="Filter jobs by tag">Tags:
+  <a href="/"{{if not .Tags}} aria-current="page"{{end}}>All</a>
+  {{- range .AllTags}} <a class="tag" href="/?tag={{.}}"{{if $.Data.Filtered .}} aria-current="page"{{end}}>{{.}}</a>{{end}}
+</nav>{{end}}
 <section class="panel table-wrap">
   <table class="jobs-table">
     <thead>
@@ -18,14 +22,14 @@
 {{define "jobs_body"}}<tbody id="jobs-body">
 {{- range .Jobs}}
 <tr>
-  <td data-label="Job" class="cell-job"><a href="/jobs/{{.ID}}">{{.Name}}</a><small>{{.Slug}}</small></td>
+  <td data-label="Job" class="cell-job"><a href="/jobs/{{.ID}}">{{.Name}}</a><small>{{.Slug}}</small>{{with .Tags}}<span class="tags">{{range .}}<a class="tag" href="/?tag={{.}}">{{.}}</a>{{end}}</span>{{end}}</td>
   <td data-label="Status" class="cell-status">{{template "status" .Status}}{{if and (eq .Status "paused") .PausedUntil}}<small>until {{template "time" .PausedUntil}}</small>{{end}}{{if .MissedAt}}<small>expected {{template "time" .MissedAt}}</small>{{end}}{{if .UndeliveredAlerts}}<small><a class="text-warning" href="/jobs/{{.ID}}#alerts">{{.UndeliveredAlerts}} {{if eq .UndeliveredAlerts 1}}alert{{else}}alerts{{end}} not delivered</a></small>{{end}}</td>
   <td data-label="Last run">{{if .LastRun}}<a href="/runs/{{.LastRun.ID}}">{{template "time" .LastRun.StartedAt}}</a>{{else}}—{{end}}</td>
   <td data-label="Duration" class="cell-duration"><span>{{if .LastRun}}{{duration .LastRun.DurationMS}}{{with .Trend.SlowRun .LastRun.ID}} {{template "slow" .}}{{end}}{{else}}—{{end}}</span>{{if .Trend.Bars}}{{template "sparkline" .Trend}}{{end}}</td>
   <td data-label="Next expected">{{if .NextExpectedAt}}{{template "time" .NextExpectedAt}}{{else}}—{{end}}</td>
 </tr>
 {{- else}}
-<tr><td colspan="5" class="empty">No jobs yet. Wrap a command with <code>cronwatch run --name "My job" -- ./script.sh</code>.</td></tr>
+<tr><td colspan="5" class="empty">{{if .Tags}}No jobs have {{if eq (len .Tags) 1}}this tag{{else}}all of these tags{{end}}. <a href="/">Show all jobs</a>.{{else}}No jobs yet. Wrap a command with <code>cronwatch run --name "My job" -- ./script.sh</code>.{{end}}</td></tr>
 {{- end}}
 </tbody>{{end}}
 

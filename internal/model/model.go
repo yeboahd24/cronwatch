@@ -24,6 +24,8 @@ type Job struct {
 	// ArchivedAt is when it was archived. A paused or archived job is not
 	// monitored: it is not checked for missed runs and raises no alerts.
 	PausedAt, PausedUntil, ArchivedAt *time.Time
+	// Tags group jobs for filtering; sorted, and nil for none.
+	Tags []string
 }
 
 // Paused reports whether a pause is in effect at now.

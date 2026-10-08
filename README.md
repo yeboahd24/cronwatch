@@ -86,7 +86,9 @@ jobs and logs; it cannot execute commands.
 - **Jobs** lists every job with its status, last run, duration, and next
   expected run, and refreshes every 10 seconds. Below it, **Recent logs** shows
   the end of the latest failing run's output (or the latest run when nothing
-  is failing). Lines the command wrote to stderr are shown in red.
+  is failing). Lines the command wrote to stderr are shown in red. Jobs
+  with [tags](#tags) show them; click one, or one above the list, to show
+  only the jobs with it.
 - **Runs** lists runs across all jobs, newest first, 100 to a page; **Older**
   goes further back. Filter by job, status and the days runs started (in local
   time). The filters are in the URL, so a filtered list can be bookmarked, and
@@ -264,6 +266,7 @@ Backup written to /backups/db.sql.gz
 | `--no-overlap` | Skip the run, and record it as `skipped`, if the job's previous run is still running. |
 | `--on-failure 'CMD'` | Shell command to run when the job starts failing. See [Notifications](#notifications). |
 | `--on-recover 'CMD'` | Shell command to run when the job succeeds again after failing. |
+| `--tag TAG` | Group the job by a tag, such as `backup`; repeat or separate with commas for more. See [Tags](#tags). |
 | `--notify URL` | Send failure and recovery alerts to a chat or push service; repeat for more. See [Sending to chat and push services](#sending-to-chat-and-push-services). |
 | `--on-storage-error fail\|run` | What to do when the run cannot be recorded. See [When recording fails](#when-recording-fails). |
 
@@ -290,6 +293,26 @@ Different names that produce the same slug share one job; CronWatch prints a
 warning when that happens, and `--slug` keeps them apart.
 
 Each run also records its peak memory and CPU time.
+
+#### Tags
+
+Tags group jobs, for example by system or by team, so you can list, check
+or summarize some of them:
+
+```sh
+cronwatch run --name "Database Backup" --tag backup,db -- ./backup.sh
+cronwatch jobs --tag db
+cronwatch check --tag db
+cronwatch digest --tag backup
+```
+
+A tag is lowercase letters, digits and hyphens, up to 40 characters;
+uppercase is lowercased. `--tag` replaces the job's tags only when you pass
+it, like `--schedule`, so a run by hand keeps them; `--tag ""` removes them.
+`cronwatch ping --tag` and a hub ping's `tag` parameter set them the same way.
+Given more than once, `--tag` on `jobs`, `check` and `digest` selects the jobs
+that have all of them. On the dashboard, `/?tag=db` lists only those jobs;
+the Runs, Logs and Timeline pages are not filtered by tag yet.
 
 #### Deciding success
 
@@ -486,7 +509,8 @@ To start it at boot from cron:
 ### `cronwatch jobs`
 
 Lists every job with its current status. Archived jobs are left out unless
-you pass `--all`:
+you pass `--all`, and `--tag TAG` lists only the jobs with that tag. Once a
+job has tags, the table gets a TAGS column:
 
 ```console
 $ cronwatch jobs
@@ -698,7 +722,7 @@ because `try` replaces the environment.
 ### `cronwatch digest`
 
 ```sh
-cronwatch digest [--since DURATION] [--quiet]
+cronwatch digest [--since DURATION] [--quiet] [--tag TAG]
 ```
 
 Prints a plain-text summary: the jobs that need attention now, and each job's
@@ -763,7 +787,7 @@ it, and `prune --older-than` deletes old copies but always keeps the newest.
 ### `cronwatch ping`
 
 ```sh
-cronwatch ping [--start | --fail] [--message TEXT] [--exit-code N] [--max-duration DURATION] JOB-SLUG
+cronwatch ping [--start | --fail] [--message TEXT] [--exit-code N] [--max-duration DURATION] [--tag TAG] JOB-SLUG
 ```
 
 Records a run of a job that cannot be wrapped with `cronwatch run`, such as a
@@ -806,14 +830,15 @@ A machine without CronWatch can ping a hub over HTTP; see
 ### `cronwatch check`
 
 ```sh
-cronwatch check [JOB-SLUG...]
+cronwatch check [--tag TAG] [JOB-SLUG...]
 ```
 
 Prints one status line and exits like a Nagios plugin, for Nagios, Icinga,
 Zabbix or any monitor that runs a command: 0 OK; 1 WARNING (a last run was
 unusually slow, or a job is getting slower); 2 CRITICAL (a job failed, timed
 out, missed a run or has an impossible schedule); 3 UNKNOWN. It checks every
-job unless given slugs. The text after `|` is performance data, and each
+job unless given slugs, and with `--tag` only the jobs with that tag. The
+text after `|` is performance data, and each
 problem gets a line of its own:
 
 ```console
@@ -1091,8 +1116,8 @@ curl -fsS -H "Authorization: Bearer $TOKEN" --data-binary @etl.log "$HUB/nightly
 | `POST /api/v1/ping/SLUG/CODE` | A run that exited with `CODE`, 0 to 255: failed unless it is 0 |
 
 The body, up to 1 MiB, is recorded as the run's output, as `--message` is.
-The query takes `name`, `schedule`, `grace` and `max_duration`, which set the
-job like `ping`'s flags. Use `-X POST` when there is no body. The hub answers
+The query takes `name`, `schedule`, `grace`, `max_duration` and `tag`
+(repeat it for more), which set the job like `ping`'s flags. Use `-X POST` when there is no body. The hub answers
 204 when the ping is recorded, 400 with the reason when it is not, and 401
 for an unknown token.
 

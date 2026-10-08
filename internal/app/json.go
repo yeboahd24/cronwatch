@@ -47,10 +47,12 @@ type jsonJob struct {
 	LastRun        *jsonRun   `json:"last_run"`
 	NextExpectedAt *time.Time `json:"next_expected_at"`
 	MissedAt       *time.Time `json:"missed_at"`
+	Tags           []string   `json:"tags"` // [] for none
 }
 
 func newJSONJob(v model.JobView) jsonJob {
-	out := jsonJob{Slug: v.Slug, Name: v.Name, Status: v.Status, Schedule: v.Schedule, GraceSeconds: v.GraceSeconds}
+	out := jsonJob{Slug: v.Slug, Name: v.Name, Status: v.Status, Schedule: v.Schedule, GraceSeconds: v.GraceSeconds,
+		Tags: append([]string{}, v.Tags...)}
 	if v.MaxDurationSeconds > 0 {
 		out.MaxDurationSeconds = &v.MaxDurationSeconds
 	}

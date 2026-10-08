@@ -77,7 +77,7 @@
   // The dashboard's jobs table and recent logs.
   if (document.getElementById('jobs-body')) {
     poll(document.getElementById('refresh-status'), 10000, async () => {
-      const fresh = await fetchPage('/partials/dashboard');
+      const fresh = await fetchPage('/partials/dashboard' + location.search);
       for (const id of ['jobs-body', 'recent-logs']) {
         const next = fresh.getElementById(id);
         const current = document.getElementById(id);

@@ -14,6 +14,7 @@ import (
 	"unicode"
 
 	"github.com/yeboahd24/cronwatch/internal/config"
+	"github.com/yeboahd24/cronwatch/internal/model"
 	"github.com/yeboahd24/cronwatch/internal/runner"
 	"github.com/yeboahd24/cronwatch/internal/schedule"
 	"github.com/yeboahd24/cronwatch/internal/storage"
@@ -108,7 +109,9 @@ func parseRunArgs(args []string, help io.Writer) (runOptions, error) {
 	noOverlap := fs.Bool("no-overlap", false, "skip this run, and record it as skipped, if the job's previous run is still running")
 	onFailure := fs.String("on-failure", "", "shell `command` to run when the job starts failing, times out or misses a run (default $"+envOnFailure+")")
 	onRecover := fs.String("on-recover", "", "shell `command` to run when the job succeeds again after failing (default $"+envOnRecover+")")
-	var notify urlList
+	var tags stringList
+	fs.Var(&tags, "tag", "`tag` to group the job by, such as backup; repeat or separate with commas for more, and pass \"\" to remove them")
+	var notify stringList
 	fs.Var(&notify, "notify", "send failure and recovery alerts to this `URL` with cronwatch notify; repeat for more (default $"+envNotify+")")
 	onStorageError := fs.String("on-storage-error", "", "`action` when the run cannot be recorded: fail (do not run the command) or run (run it unrecorded) (default $"+envOnStorageError+", else fail)")
 	sep := len(args)
@@ -204,6 +207,13 @@ func parseRunArgs(args []string, help io.Writer) (runOptions, error) {
 			opts.Spec.OnRecover = onRecover
 		}
 	})
+	if tags != nil {
+		t, err := model.Tags(tags)
+		if err != nil {
+			return opts, fmt.Errorf("--%w", err)
+		}
+		opts.Spec.Tags = &t
+	}
 	// --notify sets the hooks that --on-failure and --on-recover do not.
 	if len(notify) > 0 {
 		hook, err := notifyHook(notify)
