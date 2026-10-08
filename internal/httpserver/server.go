@@ -138,6 +138,8 @@ func New(store *storage.Store, opts Options) (*Server, error) {
 	r.Get("/timeline", s.handleTimeline)
 	r.Get("/servers", s.handleServers)
 	r.Get("/servers/{name}", s.handleServer)
+	r.Get("/badge/tag/{file}", s.handleTagBadge)
+	r.Get("/badge/{file}", s.handleJobBadge)
 	if opts.Metrics {
 		r.Get("/metrics", s.handleMetrics)
 	}
@@ -320,7 +322,18 @@ func (s *Server) handleJob(w http.ResponseWriter, r *http.Request) {
 		Trend    *jobTrend
 		Crontab  []storage.CrontabChange
 		Alerts   []storage.Alert
-	}{view, runs, groups, newJobTrend(trend, job.Name), history, alerts}})
+		BadgeURL string
+	}{view, runs, groups, newJobTrend(trend, job.Name), history, alerts, badgeURL(r, "/badge/"+job.Slug+".svg")}})
+}
+
+// badgeURL is the absolute URL of path on this server, as the browser
+// reached it, for a badge to paste elsewhere.
+func badgeURL(r *http.Request, path string) string {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	return scheme + "://" + r.Host + path
 }
 
 // failureGroupLimit caps the Failure types table on a job page,

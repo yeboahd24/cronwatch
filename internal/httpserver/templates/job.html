@@ -97,5 +97,12 @@
     </tbody>
   </table>
 </section>
+
+<h2 id="badge">Badge</h2>
+<section class="panel badge-panel">
+  <img src="/badge/{{.View.Slug}}.svg" alt="{{.View.Name}} status badge" height="20">
+  <p>Show this job's status in a README or wiki. The image is served from here, so whoever views it must be able to reach this dashboard; <code>cronwatch badge {{.View.Slug}} &gt; status.svg</code> writes it as a file to publish instead.</p>
+  <pre class="badge-snippet"><code>![{{.View.Name}}]({{.BadgeURL}})</code></pre>
+</section>
 {{end}}
 {{template "foot"}}{{end}}
