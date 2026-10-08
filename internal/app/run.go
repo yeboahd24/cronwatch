@@ -96,6 +96,7 @@ func parseRunArgs(args []string, help io.Writer) (runOptions, error) {
 	name := fs.String("name", "", "job `name` shown on the dashboard (required)")
 	slug := fs.String("slug", "", "stable job `id` (default: the name in lowercase with dashes)")
 	expr := fs.String("schedule", "", "five-field cron `expression` CronWatch should expect the job on")
+	every := fs.Duration("every", 0, "expect the job at least once every `duration`, such as 1h, counted from its last start, instead of on a cron schedule")
 	grace := fs.Duration("grace", storage.DefaultGrace, "how late a run may start before it counts as missed")
 	dataDir := fs.String("data-dir", "", "data directory")
 	noEcho := fs.Bool("no-echo", false, "record output without also printing it")
@@ -150,6 +151,10 @@ func parseRunArgs(args []string, help io.Writer) (runOptions, error) {
 			return opts, err
 		}
 	}
+	everyExpr, err := everySchedule(fs, *every)
+	if err != nil {
+		return opts, err
+	}
 	if *timeout < 0 {
 		return opts, errors.New("--timeout must be non-negative")
 	}
@@ -199,6 +204,8 @@ func parseRunArgs(args []string, help io.Writer) (runOptions, error) {
 		switch f.Name {
 		case "schedule":
 			opts.Spec.Schedule = expr
+		case "every":
+			opts.Spec.Schedule = &everyExpr
 		case "grace":
 			opts.Spec.Grace = grace
 		case "on-failure":
@@ -227,6 +234,24 @@ func parseRunArgs(args []string, help io.Writer) (runOptions, error) {
 		}
 	}
 	return opts, nil
+}
+
+// everySchedule returns the schedule for --every d, checking that it is not
+// passed with --schedule. It returns "" if --every was not passed.
+func everySchedule(fs *flag.FlagSet, d time.Duration) (string, error) {
+	passed := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { passed[f.Name] = true })
+	if !passed["every"] {
+		return "", nil
+	}
+	if passed["schedule"] {
+		return "", errors.New("--every and --schedule cannot go together: a job is expected either every period or on a cron schedule")
+	}
+	expr := schedule.Every(d)
+	if err := schedule.Validate(expr, time.Now()); err != nil {
+		return "", fmt.Errorf("--every: %w", err)
+	}
+	return expr, nil
 }
 
 // joinCommand stores argv as Go-quoted words; splitCommand reverses it.
