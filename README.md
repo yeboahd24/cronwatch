@@ -503,6 +503,25 @@ crontab lines are registered.
 that has not succeeded for a day. Metrics follow the same loopback rule as
 the dashboard.
 
+`serve` also answers a read-only JSON API, for scripts and other tools that
+would otherwise read the dashboard:
+
+| Request | Answer |
+| --- | --- |
+| `GET /api/v1/jobs` | `{"jobs": [...]}`: unarchived jobs; `?all=1` adds archived ones, and `?tag=TAG`, which may repeat, keeps those with every tag |
+| `GET /api/v1/jobs/SLUG` | `{"job": {...}}` |
+| `GET /api/v1/runs` | `{"runs": [...], "next": URL}`: runs, newest first, filtered like the Runs page by `job=SLUG`, `status`, and `from` and `to` days; `limit` sets the page size, 100 by default and at most 500, and `next` is the next older page, or `null` |
+| `GET /api/v1/runs/ID` | `{"run": {...}, "log_url": "/runs/ID/log"}` |
+
+Jobs and runs have exactly the fields of `cronwatch jobs --json` and
+`cronwatch runs --json`. An error answers with its status and
+`{"error": "..."}`. The API follows the dashboard's loopback rule and changes
+nothing:
+
+```sh
+curl -s 'http://localhost:8765/api/v1/runs?status=failed&limit=5' | jq -r '.runs[] | "\(.job): exit \(.exit_code)"'
+```
+
 To start it at boot from cron:
 
 ```cron

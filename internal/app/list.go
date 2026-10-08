@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/yeboahd24/cronwatch/internal/apijson"
 	"io"
 	"os"
 	"slices"
@@ -67,9 +68,9 @@ func jobsCommand(ctx context.Context, args []string, stdout io.Writer) error {
 	}
 	views = model.WithTags(views, tags)
 	if *asJSON {
-		out := make([]jsonJob, 0, len(views))
+		out := make([]apijson.Job, 0, len(views))
 		for _, v := range views {
-			out = append(out, newJSONJob(v))
+			out = append(out, apijson.NewJob(v))
 		}
 		return writeJSON(stdout, out)
 	}
@@ -162,9 +163,9 @@ func runsCommand(ctx context.Context, args []string, stdout io.Writer) error {
 		runs = append(runs, r.Run)
 	}
 	if *asJSON {
-		out := make([]jsonRun, 0, len(runs))
+		out := make([]apijson.Run, 0, len(runs))
 		for _, r := range runs {
-			out = append(out, newJSONRun(r, byID[r.JobID]))
+			out = append(out, apijson.NewRun(r, byID[r.JobID]))
 		}
 		return writeJSON(stdout, out)
 	}
