@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/yeboahd24/cronwatch/internal/apijson"
 	"io"
 	"net/http"
 	"slices"
@@ -69,7 +70,7 @@ func TestTags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var jobs []jsonJob
+	var jobs []apijson.Job
 	if err := json.Unmarshal([]byte(out), &jobs); err != nil {
 		t.Fatal(err)
 	}

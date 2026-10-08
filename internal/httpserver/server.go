@@ -138,6 +138,13 @@ func New(store *storage.Store, opts Options) (*Server, error) {
 	r.Get("/timeline", s.handleTimeline)
 	r.Get("/servers", s.handleServers)
 	r.Get("/servers/{name}", s.handleServer)
+	r.Route("/api/v1", func(r chi.Router) {
+		r.Get("/jobs", s.handleAPIJobs)
+		r.Get("/jobs/{slug}", s.handleAPIJob)
+		r.Get("/runs", s.handleAPIRuns)
+		r.Get("/runs/{id}", s.handleAPIRun)
+		r.NotFound(apiNotFound)
+	})
 	r.Get("/badge/tag/{file}", s.handleTagBadge)
 	r.Get("/badge/{file}", s.handleJobBadge)
 	if opts.Metrics {
