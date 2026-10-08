@@ -8,11 +8,60 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/yeboahd24/cronwatch/internal/channel"
+	"github.com/yeboahd24/cronwatch/internal/crontab"
 )
+
+// envNotify sets both hooks to "cronwatch notify" with its space-separated
+// URLs, for jobs whose hook is not set more specifically.
+const envNotify = "CRONWATCH_NOTIFY"
+
+// notifyHook returns the hook command that sends to urls, after checking
+// them. It names this executable by its full path, because a hook runs with
+// the PATH of whichever cronwatch process delivers it.
+func notifyHook(urls []string) (string, error) {
+	words := []string{"cronwatch", "notify"}
+	if exe, err := os.Executable(); err == nil {
+		words[0] = crontab.Quote(exe)
+	}
+	for i, u := range urls {
+		if _, err := channel.Parse(u); err != nil {
+			return "", fmt.Errorf("notify URL %d: %w", i+1, err)
+		}
+		words = append(words, crontab.Quote(u))
+	}
+	return strings.Join(words, " "), nil
+}
+
+// envHook returns the hook that environment variables set for hookEnv
+// (CRONWATCH_ON_FAILURE or CRONWATCH_ON_RECOVER): its own variable if
+// non-empty, else CRONWATCH_NOTIFY's URLs. ok is false if neither is set;
+// an empty hook variable is set, and removes the hook.
+func envHook(lookup func(string) (string, bool), hookEnv string) (hook string, ok bool, err error) {
+	hook, ok = lookup(hookEnv)
+	if hook != "" {
+		return hook, true, nil
+	}
+	notify, _ := lookup(envNotify)
+	if urls := strings.Fields(notify); len(urls) > 0 {
+		hook, err = notifyHook(urls)
+		if err != nil {
+			return "", ok, fmt.Errorf("%s: %w", envNotify, err)
+		}
+		return hook, true, nil
+	}
+	return "", ok, nil
+}
+
+// urlList is a flag that may be repeated.
+type urlList []string
+
+func (l *urlList) String() string     { return strings.Join(*l, " ") }
+func (l *urlList) Set(v string) error { *l = append(*l, v); return nil }
 
 // notifyTimeout bounds all sends together, below hookTimeout, so a slow
 // service fails the hook with its own error instead of the hook timing out.

@@ -108,6 +108,8 @@ func parseRunArgs(args []string, help io.Writer) (runOptions, error) {
 	noOverlap := fs.Bool("no-overlap", false, "skip this run, and record it as skipped, if the job's previous run is still running")
 	onFailure := fs.String("on-failure", "", "shell `command` to run when the job starts failing, times out or misses a run (default $"+envOnFailure+")")
 	onRecover := fs.String("on-recover", "", "shell `command` to run when the job succeeds again after failing (default $"+envOnRecover+")")
+	var notify urlList
+	fs.Var(&notify, "notify", "send failure and recovery alerts to this `URL` with cronwatch notify; repeat for more (default $"+envNotify+")")
 	onStorageError := fs.String("on-storage-error", "", "`action` when the run cannot be recorded: fail (do not run the command) or run (run it unrecorded) (default $"+envOnStorageError+", else fail)")
 	sep := len(args)
 	for i, arg := range args {
@@ -202,6 +204,18 @@ func parseRunArgs(args []string, help io.Writer) (runOptions, error) {
 			opts.Spec.OnRecover = onRecover
 		}
 	})
+	// --notify sets the hooks that --on-failure and --on-recover do not.
+	if len(notify) > 0 {
+		hook, err := notifyHook(notify)
+		if err != nil {
+			return opts, fmt.Errorf("--%w", err)
+		}
+		for _, dst := range []**string{&opts.Spec.OnFailure, &opts.Spec.OnRecover} {
+			if *dst == nil {
+				*dst = &hook
+			}
+		}
+	}
 	return opts, nil
 }
 
@@ -248,7 +262,15 @@ func runCommand(ctx context.Context, args []string, stdout, stderr io.Writer) er
 		dst **string
 		env string
 	}{{&spec.OnFailure, envOnFailure}, {&spec.OnRecover, envOnRecover}} {
-		if v, ok := os.LookupEnv(h.env); ok && *h.dst == nil {
+		if *h.dst != nil {
+			continue
+		}
+		// A bad CRONWATCH_NOTIFY leaves the hook as it was rather than
+		// keeping the job from running; cron mails the warning.
+		v, ok, err := envHook(os.LookupEnv, h.env)
+		if err != nil {
+			fmt.Fprintf(stderr, "cronwatch: warning: %v\n", err)
+		} else if ok {
 			*h.dst = &v
 		}
 	}

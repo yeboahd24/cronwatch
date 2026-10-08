@@ -104,12 +104,17 @@ func syncCrontab(ctx context.Context, s *storage.Store, text string) (syncResult
 		seen[spec.Slug] = entry.Line
 		// The crontab is the source of truth for its lines' hooks: a hook
 		// variable removed from it is removed from the job.
+		notifyReported := false
 		for _, h := range []struct {
 			dst **string
 			env string
 		}{{&spec.OnFailure, envOnFailure}, {&spec.OnRecover, envOnRecover}} {
 			if *h.dst == nil {
-				v := tab.Env[h.env]
+				v, _, err := envHook(func(k string) (string, bool) { v, ok := tab.Env[k]; return v, ok }, h.env)
+				if err != nil && !notifyReported {
+					problem(err.Error()) // once, though it applies to both hooks
+					notifyReported = true
+				}
 				*h.dst = &v
 			}
 		}

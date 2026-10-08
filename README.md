@@ -264,6 +264,7 @@ Backup written to /backups/db.sql.gz
 | `--no-overlap` | Skip the run, and record it as `skipped`, if the job's previous run is still running. |
 | `--on-failure 'CMD'` | Shell command to run when the job starts failing. See [Notifications](#notifications). |
 | `--on-recover 'CMD'` | Shell command to run when the job succeeds again after failing. |
+| `--notify URL` | Send failure and recovery alerts to a chat or push service; repeat for more. See [Sending to chat and push services](#sending-to-chat-and-push-services). |
 | `--on-storage-error fail\|run` | What to do when the run cannot be recorded. See [When recording fails](#when-recording-fails). |
 
 `--schedule` and `--grace` only change the stored job when you pass them, so
@@ -381,13 +382,22 @@ CRONWATCH_ON_FAILURE=curl -fsS -d "$CRONWATCH_JOB_NAME $CRONWATCH_EVENT: $CRONWA
 
 ##### Sending to chat and push services
 
-`cronwatch notify URL...` turns a hook's variables into a message and sends
-it to each URL, so a hook needs no `curl` or quoting of its own:
+`--notify URL` sends a job's failure and recovery alerts to a chat or push
+service, with no `curl` or quoting of your own. Repeat it to send to more than
+one. To alert on every job, set `CRONWATCH_NOTIFY` at the top of your crontab
+to one or more space-separated URLs:
 
 ```cron
-CRONWATCH_ON_FAILURE=$HOME/.local/bin/cronwatch notify https://ntfy.sh/my-cron-alerts https://hooks.slack.com/services/T000/B000/XXXX
-CRONWATCH_ON_RECOVER=$HOME/.local/bin/cronwatch notify https://ntfy.sh/my-cron-alerts https://hooks.slack.com/services/T000/B000/XXXX
+CRONWATCH_NOTIFY=https://ntfy.sh/my-cron-alerts https://hooks.slack.com/services/T000/B000/XXXX
 ```
+
+`--notify` sets the `--on-failure` and `--on-recover` hooks to
+`cronwatch notify URL...`, a command you can also use in a hook of your own.
+`--on-failure` and `--on-recover` still take precedence for their own event,
+and so do `CRONWATCH_ON_FAILURE` and `CRONWATCH_ON_RECOVER` over
+`CRONWATCH_NOTIFY`; a line's `--notify` takes precedence over all of the
+crontab's variables. A `CRONWATCH_NOTIFY` that is not a valid URL is a warning
+and leaves the job's hooks as they were, so the job still runs.
 
 The URL's host picks the service:
 
