@@ -249,7 +249,7 @@ Backup written to /backups/db.sql.gz
 | --- | --- |
 | `--name NAME` | Job name shown on the dashboard. Required. |
 | `--slug SLUG` | Stable ID for the job. Defaults to the name in lowercase with dashes (`database-backup`). |
-| `--schedule "EXPR"` | Five-field cron expression CronWatch should expect the job on. |
+| `--schedule "EXPR"` | Five-field cron expression CronWatch should expect the job on, or `@hourly`, `@daily`, `@weekly`, `@monthly` or `@yearly`. Prefix it with `CRON_TZ=Area/City ` to read it in another time zone than the server's. |
 | `--grace DURATION` | How late a run may start before it counts as missed, e.g. `10m`. Default `5m`. |
 | `--max-log-bytes N` | Output kept per stream. Default 1 MiB, maximum 64 MiB. |
 | `--no-echo` | Record output without also printing it. |

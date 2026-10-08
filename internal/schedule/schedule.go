@@ -12,13 +12,19 @@ var parser = cron.NewParser(
 		cron.Hour |
 		cron.Dom |
 		cron.Month |
-		cron.Dow,
+		cron.Dow |
+		cron.Descriptor,
 )
 
 func Parse(expr string) (cron.Schedule, error) {
 	s, err := parser.Parse(expr)
 	if err != nil {
 		return nil, fmt.Errorf("invalid cron expression %q: %w", expr, err)
+	}
+	// "@every" counts from whenever it is first asked, so it has no expected
+	// times to miss; cron does not accept it either.
+	if _, ok := s.(cron.ConstantDelaySchedule); ok {
+		return nil, fmt.Errorf("invalid cron expression %q: @every is not a cron schedule", expr)
 	}
 	return s, nil
 }
