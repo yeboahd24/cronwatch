@@ -225,6 +225,7 @@ to read the details.
 | [`cronwatch report`](#multiple-servers) | Send this server's jobs to its hub once |
 | [`cronwatch timers`](#cronwatch-timers) | List systemd timers and their last results |
 | [`cronwatch notify`](#sending-to-chat-and-push-services) | Send a hook's alert to ntfy, Slack, Discord, Telegram or a webhook |
+| [`cronwatch badge`](#cronwatch-badge) | Print a job's or a tag's status as an SVG badge |
 | [`cronwatch prune`](#cronwatch-prune) | Delete old finished runs |
 | [`cronwatch version`](#cronwatch-version) | Print the version |
 
@@ -947,6 +948,42 @@ the jobs table, each with its job page and runs; `jobs --all` and
 
 A job whose line you remove from your crontab is unscheduled by
 [crontab sync](#crontab-sync) without pausing or archiving it.
+
+### `cronwatch badge`
+
+```sh
+cronwatch badge [--label TEXT] [--json] JOB-SLUG | --tag TAG
+```
+
+Shows a job's status as a badge for a README, a wiki or a status page:
+the job's name, and `ok`, `failed`, `timed out`, `missed`, `running`,
+`paused` or `no runs`, in green, red, blue or grey. With `--tag`, the badge
+counts the tag's jobs instead, such as `backup | 1 of 3 failing`, and is
+green only when none needs attention.
+
+`cronwatch serve` serves the same badges, always current:
+
+| URL | Badge |
+| --- | --- |
+| `/badge/JOB-SLUG.svg` | The job |
+| `/badge/tag/TAG.svg` | The jobs with the tag |
+
+Add `?label=TEXT` to change the left side. Each job's page shows its badge
+and the Markdown to paste. Use `.json` in place of `.svg` for a
+[shields.io endpoint](https://shields.io/badges/endpoint-badge), to draw the
+badge in shields.io's styles.
+
+A served badge is only seen by those who can reach the dashboard, which is on
+loopback unless you pass `--public`. To show one where the dashboard is not
+reachable, such as a public README, write it to a file that something else
+publishes, for example from cron:
+
+```cron
+*/5 * * * * $HOME/.local/bin/cronwatch badge --tag backup > /var/www/status/backup.svg
+```
+
+Badges show a job's name and status, nothing more, but a public one says that
+the job exists; use `--label` to name it otherwise.
 
 ### `cronwatch timers`
 

@@ -557,3 +557,10 @@ tr.is-stale td:first-child { opacity: 1; }
   .section-head { flex-wrap: wrap; }
   .log-line { grid-template-columns: 3.5ch minmax(0, 1fr); gap: 10px; }
 }
+
+/* Status badge */
+
+.badge-panel { padding: 16px 18px; }
+.badge-panel img { display: block; margin-bottom: 10px; }
+.badge-panel p { margin: 0 0 10px; color: var(--muted); font-size: 13px; }
+.badge-snippet { margin: 0; padding: 10px 12px; overflow-x: auto; background: var(--log-bg); border: 1px solid var(--border); border-radius: 6px; font-size: 12px; }
