@@ -96,6 +96,8 @@ func dispatch(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		return jobStateCommand(ctx, args[0], args[1:], stdout)
 	case "timers":
 		return timersCommand(ctx, args[1:], stdout, stderr)
+	case "notify":
+		return notifyCommand(ctx, args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		// "cronwatch help run" shows the help for one command.
 		if len(args) > 1 && args[1] != "help" && !strings.HasPrefix(args[1], "-") {
@@ -128,6 +130,7 @@ Usage:
   cronwatch report --to URL [--token-file FILE]
   cronwatch ping [--start | --fail] JOB-SLUG
   cronwatch timers [--all] [--json]
+  cronwatch notify [--test] URL...
   cronwatch pause [--for DURATION] JOB-SLUG...
   cronwatch resume JOB-SLUG...
   cronwatch archive JOB-SLUG...

@@ -31,8 +31,9 @@ the dashboard as the same user, or point them at the same data directory.
   when a job did not start on time.
 - **Failures your exit codes miss.** Mark runs failed when output matches a
   pattern or a run takes too long, and keep overlapping runs from piling up.
-- **Alerts without new dependencies.** Run any command when a job starts
-  failing or recovers, or let cron email you a daily `cronwatch digest`.
+- **Alerts without new dependencies.** Send ntfy, Slack, Discord, Telegram or
+  webhook alerts when a job starts failing or recovers, run any command of
+  your own, or let cron email you a daily `cronwatch digest`.
 - **Local by default.** SQLite storage and a dashboard bound to
   `127.0.0.1:8765`; SSH forwarding covers remote servers.
 - **Several servers in one view.** Authenticated reports feed a hub's
@@ -220,6 +221,7 @@ to read the details.
 | [`cronwatch hosts`](#multiple-servers) | Add and remove the servers that report to a hub |
 | [`cronwatch report`](#multiple-servers) | Send this server's jobs to its hub once |
 | [`cronwatch timers`](#cronwatch-timers) | List systemd timers and their last results |
+| [`cronwatch notify`](#sending-to-chat-and-push-services) | Send a hook's alert to ntfy, Slack, Discord, Telegram or a webhook |
 | [`cronwatch prune`](#cronwatch-prune) | Delete old finished runs |
 | [`cronwatch version`](#cronwatch-version) | Print the version |
 
@@ -262,6 +264,7 @@ Backup written to /backups/db.sql.gz
 | `--no-overlap` | Skip the run, and record it as `skipped`, if the job's previous run is still running. |
 | `--on-failure 'CMD'` | Shell command to run when the job starts failing. See [Notifications](#notifications). |
 | `--on-recover 'CMD'` | Shell command to run when the job succeeds again after failing. |
+| `--notify URL` | Send failure and recovery alerts to a chat or push service; repeat for more. See [Sending to chat and push services](#sending-to-chat-and-push-services). |
 | `--on-storage-error fail\|run` | What to do when the run cannot be recorded. See [When recording fails](#when-recording-fails). |
 
 `--schedule` and `--grace` only change the stored job when you pass them, so
@@ -376,6 +379,47 @@ any `%` as `\%`, because cron treats `%` in a command as a newline.
 ```cron
 CRONWATCH_ON_FAILURE=curl -fsS -d "$CRONWATCH_JOB_NAME $CRONWATCH_EVENT: $CRONWATCH_LAST_ERROR" https://ntfy.sh/my-cron-alerts
 ```
+
+##### Sending to chat and push services
+
+`--notify URL` sends a job's failure and recovery alerts to a chat or push
+service, with no `curl` or quoting of your own. Repeat it to send to more than
+one. To alert on every job, set `CRONWATCH_NOTIFY` at the top of your crontab
+to one or more space-separated URLs:
+
+```cron
+CRONWATCH_NOTIFY=https://ntfy.sh/my-cron-alerts https://hooks.slack.com/services/T000/B000/XXXX
+```
+
+`--notify` sets the `--on-failure` and `--on-recover` hooks to
+`cronwatch notify URL...`, a command you can also use in a hook of your own.
+`--on-failure` and `--on-recover` still take precedence for their own event,
+and so do `CRONWATCH_ON_FAILURE` and `CRONWATCH_ON_RECOVER` over
+`CRONWATCH_NOTIFY`; a line's `--notify` takes precedence over all of the
+crontab's variables. A `CRONWATCH_NOTIFY` that is not a valid URL is a warning
+and leaves the job's hooks as they were, so the job still runs.
+
+The URL's host picks the service:
+
+| URL | Sends |
+| --- | --- |
+| `https://ntfy.sh/TOPIC` | An ntfy notification, high priority for failures |
+| `https://hooks.slack.com/services/...` | A Slack message |
+| `https://discord.com/api/webhooks/...` | A Discord message |
+| `https://api.telegram.org/botTOKEN/sendMessage?chat_id=CHAT` | A Telegram message; add `&message_thread_id=N` for a topic |
+| Any other `http://` or `https://` URL | A JSON webhook: `event`, `title`, `message`, `job_name`, `job_slug`, `host`, `status`, `exit_code`, `reason`, `last_error`, `run_id`, `started_at`, `expected_at` |
+
+For a self-hosted service, put its name before the scheme:
+`ntfy+https://ntfy.example.com/TOPIC`, or `slack+https://` for a
+Slack-compatible incoming webhook such as Mattermost's. An ntfy URL's user
+and password are sent as basic auth; put an access token as the password,
+`ntfy+https://:tk_TOKEN@ntfy.example.com/TOPIC`.
+
+`cronwatch notify --test URL...` sends a test message to check a URL. Each
+URL is tried; if any fails, the hook fails and the alert is retried, and a
+retry sends to every URL again. These URLs hold tokens: they are stored with
+the job like any hook, are not sent to a hub, and are left out of `notify`'s
+error messages.
 
 Hooks run after the result is recorded, with a 30-second limit, and the last
 4 KiB of their output is kept. A hook that fails or times out never changes the

@@ -87,7 +87,10 @@ func pingCommand(ctx context.Context, args []string, stdout, stderr io.Writer) e
 		dst **string
 		env string
 	}{{&spec.OnFailure, envOnFailure}, {&spec.OnRecover, envOnRecover}} {
-		if v, ok := os.LookupEnv(h.env); ok {
+		v, ok, err := envHook(os.LookupEnv, h.env)
+		if err != nil {
+			fmt.Fprintf(stderr, "cronwatch: warning: %v\n", err)
+		} else if ok {
 			*h.dst = &v
 		}
 	}
