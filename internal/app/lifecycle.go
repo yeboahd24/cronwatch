@@ -20,6 +20,11 @@ import (
 type lifecycle struct {
 	s      *storage.Store
 	stderr io.Writer // for warnings and hook failures
+	// remote is set for pings that arrive over HTTP: their runs record no
+	// environment, since this process's is not the job's, and their alerts
+	// are only queued, so a slow hook does not hold up the response; the
+	// caller delivers them.
+	remote bool
 }
 
 // start records a run of job starting at started, with the environment it
@@ -34,6 +39,9 @@ func (l lifecycle) start(ctx context.Context, job model.Job, started time.Time, 
 	run, err := create(ctx, job.ID, started)
 	if err != nil {
 		return run, err
+	}
+	if l.remote {
+		return run, nil
 	}
 	if err := l.s.SetRunEnv(ctx, run.ID, runenv.Capture()); err != nil {
 		fmt.Fprintf(l.stderr, "cronwatch: warning: could not record the environment: %v\n", err)
@@ -53,7 +61,10 @@ func (l lifecycle) finish(ctx context.Context, job model.Job, runID string, c st
 		fmt.Fprintf(l.stderr, "cronwatch: warning: could not read the finished run for its alerts: %v\n", err)
 		return run, nil
 	}
-	notifyRun(ctx, l.s, job, run, l.stderr)
+	queueRunAlert(ctx, l.s, job, run, l.stderr)
+	if !l.remote {
+		deliverAlerts(ctx, l.s, job.ID, l.stderr)
+	}
 	return run, nil
 }
 

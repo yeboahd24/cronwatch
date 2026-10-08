@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/yeboahd24/cronwatch/internal/config"
+	"github.com/yeboahd24/cronwatch/internal/hub"
+	"github.com/yeboahd24/cronwatch/internal/model"
 	"github.com/yeboahd24/cronwatch/internal/schedule"
 	"github.com/yeboahd24/cronwatch/internal/storage"
 )
@@ -36,20 +38,21 @@ func pingCommand(ctx context.Context, args []string, stdout, stderr io.Writer) e
 	if fs.NArg() != 1 {
 		return errors.New("ping requires one job slug")
 	}
-	slug := fs.Arg(0)
-	if !validSlug(slug) {
-		return errors.New("job slug must contain lowercase letters, digits, or hyphens")
-	}
-	if *start && (*fail || *exit >= 0 || *message != "") {
-		return errors.New("--start takes no --fail, --exit-code or --message; pass them to the end ping")
-	}
-	if *expr != "" {
-		if err := schedule.Validate(*expr, time.Now()); err != nil {
-			return err
+	p := pingRequest{Slug: fs.Arg(0), Start: *start, Fail: *fail, ExitCode: *exit, Message: *message}
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "name":
+			p.Name = name
+		case "schedule":
+			p.Schedule = expr
+		case "grace":
+			p.Grace = grace
+		case "max-duration":
+			p.MaxDuration = maxDuration
 		}
-	}
-	if *maxDuration < 0 || (*maxDuration > 0 && *maxDuration < time.Second) {
-		return errors.New("--max-duration must be 0 or at least 1s")
+	})
+	if err := p.check(); err != nil {
+		return err
 	}
 	if *dir == "" {
 		cfg, err := config.Load()
@@ -63,90 +66,148 @@ func pingCommand(ctx context.Context, args []string, stdout, stderr io.Writer) e
 		return err
 	}
 	defer s.Close()
+	_, err = recordPing(ctx, lifecycle{s: s, stderr: stderr}, p)
+	return err
+}
 
-	// An existing job keeps its name and command unless --name is passed.
-	spec := storage.JobSpec{Slug: slug, Name: slug}
-	if existing, err := s.GetJobBySlug(ctx, slug); err == nil {
+// pingRequest is one ping, from cronwatch ping or a hub's ping endpoint.
+// Nil fields leave the job's settings as they are.
+type pingRequest struct {
+	Slug     string
+	Start    bool
+	Fail     bool
+	ExitCode int // -1 for the default: 0, or 1 with Fail
+	Message  string
+
+	Name        *string
+	Schedule    *string
+	Grace       *time.Duration
+	MaxDuration *time.Duration
+}
+
+// check reports what is wrong with p, before anything is recorded.
+func (p pingRequest) check() error {
+	if !validSlug(p.Slug) {
+		return errors.New("job slug must contain lowercase letters, digits, or hyphens")
+	}
+	if p.Start && (p.Fail || p.ExitCode >= 0 || p.Message != "") {
+		return errors.New("--start takes no --fail, --exit-code or --message; pass them to the end ping")
+	}
+	if p.Name != nil && strings.TrimSpace(*p.Name) == "" {
+		return errors.New("--name must not be empty")
+	}
+	if p.Schedule != nil && *p.Schedule != "" {
+		if err := schedule.Validate(*p.Schedule, time.Now()); err != nil {
+			return err
+		}
+	}
+	if p.Grace != nil && *p.Grace < 0 {
+		return errors.New("--grace must not be negative")
+	}
+	if d := p.MaxDuration; d != nil && (*d < 0 || (*d > 0 && *d < time.Second)) {
+		return errors.New("--max-duration must be 0 or at least 1s")
+	}
+	return nil
+}
+
+// recordPing records p, which check has accepted, creating its job if
+// needed. The job's hooks come from this process's environment, as for
+// cronwatch run without hook flags.
+func recordPing(ctx context.Context, runs lifecycle, p pingRequest) (model.Job, error) {
+	s := runs.s
+	// An existing job keeps its name and command unless a name is given.
+	spec := storage.JobSpec{Slug: p.Slug, Name: p.Slug, Schedule: p.Schedule, Grace: p.Grace, MaxDuration: p.MaxDuration}
+	if existing, err := s.GetJobBySlug(ctx, p.Slug); err == nil {
 		spec.Name, spec.Command = existing.Name, existing.Command
 	} else if !errors.Is(err, sql.ErrNoRows) {
-		return err
+		return model.Job{}, err
 	}
-	fs.Visit(func(f *flag.Flag) {
-		switch f.Name {
-		case "name":
-			spec.Name = *name
-		case "schedule":
-			spec.Schedule = expr
-		case "grace":
-			spec.Grace = grace
-		case "max-duration":
-			spec.MaxDuration = maxDuration
-		}
-	})
+	if p.Name != nil {
+		spec.Name = *p.Name
+	}
 	for _, h := range []struct {
 		dst **string
 		env string
 	}{{&spec.OnFailure, envOnFailure}, {&spec.OnRecover, envOnRecover}} {
 		v, ok, err := envHook(os.LookupEnv, h.env)
 		if err != nil {
-			fmt.Fprintf(stderr, "cronwatch: warning: %v\n", err)
+			fmt.Fprintf(runs.stderr, "cronwatch: warning: %v\n", err)
 		} else if ok {
 			*h.dst = &v
 		}
 	}
-	job, err := s.UpsertJob(ctx, spec)
+	j, err := s.UpsertJob(ctx, spec)
 	if err != nil {
-		return err
+		return model.Job{}, err
 	}
 
 	now := time.Now().UTC()
-	runs := lifecycle{s: s, stderr: stderr}
 	// A run past its --max-duration has timed out, whether or not another
 	// process noticed before this ping did.
-	runs.expireHeartbeats(ctx, job.ID, now)
-	open, err := s.OpenHeartbeatRun(ctx, job.ID)
+	runs.expireHeartbeats(ctx, j.ID, now)
+	open, err := s.OpenHeartbeatRun(ctx, j.ID)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 	case err != nil:
-		return err
-	case *start:
+		return j, err
+	case p.Start:
 		// The previous run never got its end ping.
 		note := "cronwatch: no end ping before the next start ping\n"
 		code := 1
-		if _, err := runs.finish(ctx, job, open.ID, storage.Completion{Ended: now, Duration: now.Sub(open.StartedAt), Status: "failed",
+		if _, err := runs.finish(ctx, j, open.ID, storage.Completion{Ended: now, Duration: now.Sub(open.StartedAt), Status: "failed",
 			ExitCode: &code, Stderr: note, Combined: "\x02" + note, Reason: "no end ping before the next --start"}); err != nil {
-			return err
+			return j, err
 		}
 	}
-	if *start {
-		_, err := runs.start(ctx, job, now, true)
-		return err
+	if p.Start {
+		_, err := runs.start(ctx, j, now, true)
+		return j, err
 	}
 
 	run := open
 	if run.ID == "" {
-		if run, err = runs.start(ctx, job, now, true); err != nil {
-			return err
+		if run, err = runs.start(ctx, j, now, true); err != nil {
+			return j, err
 		}
 	}
 	status, code := "success", 0
-	if *fail {
+	if p.Fail {
 		status, code = "failed", 1
 	}
-	if *exit >= 0 {
-		code = *exit
+	if p.ExitCode >= 0 {
+		code = p.ExitCode
 	}
 	c := storage.Completion{Ended: now, Duration: now.Sub(run.StartedAt), Status: status, ExitCode: &code}
-	if msg := strings.TrimRight(*message, "\n"); msg != "" {
-		if *fail {
+	if msg := strings.TrimRight(p.Message, "\n"); msg != "" {
+		if p.Fail {
 			c.Stderr = msg + "\n"
 			c.Combined = "\x02" + strings.ReplaceAll(msg, "\n", "\n\x02") + "\n"
 		} else {
 			c.Stdout, c.Combined = msg+"\n", msg+"\n"
 		}
 	}
-	if _, err := runs.finish(ctx, job, run.ID, c); err != nil {
-		return fmt.Errorf("record ping: %w", err)
+	if _, err := runs.finish(ctx, j, run.ID, c); err != nil {
+		return j, fmt.Errorf("record ping: %w", err)
 	}
-	return nil
+	return j, nil
+}
+
+// hubPings records pings that arrive at a hub as this machine's own, like
+// cronwatch ping. Alerts they raise are delivered after the response, until
+// ctx, serve's, is done.
+func hubPings(ctx context.Context, s *storage.Store, stderr io.Writer) hub.PingFunc {
+	return func(reqCtx context.Context, hp hub.Ping) error {
+		p := pingRequest{Slug: hp.Slug, Start: hp.Start, Fail: hp.Fail, ExitCode: hp.ExitCode, Message: hp.Message,
+			Name: hp.Name, Schedule: hp.Schedule, Grace: hp.Grace, MaxDuration: hp.MaxDuration}
+		if err := p.check(); err != nil {
+			return fmt.Errorf("%w: %v", hub.ErrBadPing, err)
+		}
+		job, err := recordPing(reqCtx, lifecycle{s: s, stderr: stderr, remote: true}, p)
+		if err != nil {
+			fmt.Fprintf(stderr, "hub: could not record %s's ping of %s: %v\n", hp.From, hp.Slug, err)
+			return err
+		}
+		go deliverAlerts(ctx, s, job.ID, stderr)
+		return nil
+	}
 }

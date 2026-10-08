@@ -77,7 +77,7 @@ func tlsHub(t *testing.T) (string, string, string, *storage.Store) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewTLSServer(hub.Handler(s, time.Now, log.New(io.Discard, "", 0)))
+	server := httptest.NewTLSServer(hub.Handler(s, time.Now, log.New(io.Discard, "", 0), nil))
 	t.Cleanup(server.Close)
 	ca := filepath.Join(t.TempDir(), "hub.pem")
 	if err := os.WriteFile(ca, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}), 0o600); err != nil {

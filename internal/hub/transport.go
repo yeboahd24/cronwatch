@@ -87,11 +87,13 @@ func (c *Client) Send(ctx context.Context, r Report) error {
 }
 
 // Handler accepts reports at ReportPath and stores each as its host's
-// latest. It serves nothing else, so the port it listens on exposes only
-// this. now is the hub's clock, which decides when a report arrived.
-func Handler(s *storage.Store, now func() time.Time, logger *log.Logger) http.Handler {
+// latest, and, if ping is not nil, pings at PingPath. It serves nothing
+// else, so the port it listens on exposes only these. Both need a host's
+// token. now is the hub's clock, which decides when a report arrived.
+func Handler(s *storage.Store, now func() time.Time, logger *log.Logger, ping PingFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != ReportPath {
+		isPing := ping != nil && strings.HasPrefix(r.URL.Path, PingPath)
+		if r.URL.Path != ReportPath && !isPing {
 			http.NotFound(w, r)
 			return
 		}
@@ -99,6 +101,10 @@ func Handler(s *storage.Store, now func() time.Time, logger *log.Logger) http.Ha
 			w.Header().Set("Allow", http.MethodPost)
 			http.Error(w, "use POST", http.StatusMethodNotAllowed)
 			return
+		}
+		what := "a report"
+		if isPing {
+			what = "a ping"
 		}
 		token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 		host, err := storage.Host{}, storage.ErrNoHost
@@ -111,8 +117,12 @@ func Handler(s *storage.Store, now func() time.Time, logger *log.Logger) http.Ha
 				http.Error(w, "try again later", http.StatusServiceUnavailable)
 				return
 			}
-			logger.Printf("hub: rejected a report from %s with an unknown token", remoteHost(r))
+			logger.Printf("hub: rejected %s from %s with an unknown token", what, remoteHost(r))
 			http.Error(w, "unknown token", http.StatusUnauthorized)
+			return
+		}
+		if isPing {
+			servePing(w, r, host.Name, ping)
 			return
 		}
 		var report Report

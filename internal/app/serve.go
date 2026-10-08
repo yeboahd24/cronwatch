@@ -41,6 +41,7 @@ func serveCommand(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	hubAddr := fs.String("hub-addr", "", "act as a hub: accept reports from other servers on this `address`, such as :8766")
 	hubCert := fs.String("hub-cert", "", "TLS certificate `file` (PEM) for --hub-addr; required unless it is a loopback address")
 	hubKey := fs.String("hub-key", "", "TLS key `file` (PEM) for --hub-addr")
+	acceptPings := fs.Bool("accept-pings", false, "with --hub-addr, also record pings that hosts send to "+hub.PingPath+"SLUG as this machine's jobs")
 	var rc reportConfig
 	fs.StringVar(&rc.to, "report-to", "", "report this server's jobs every minute to the hub at this `URL`, such as https://hub.example:8766")
 	fs.StringVar(&rc.tokenFile, "report-token-file", "", "read the hub token from this `file` (default $"+envReportToken+")")
@@ -53,6 +54,9 @@ func serveCommand(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	}
 	if *hubAddr != "" && *hubCert == "" && !loopbackAddress(*hubAddr) {
 		return errors.New("--hub-addr on a non-loopback address needs --hub-cert and --hub-key, so tokens are not sent in the clear; behind a reverse proxy that terminates TLS, use a loopback address")
+	}
+	if *acceptPings && *hubAddr == "" {
+		return errors.New("--accept-pings needs --hub-addr")
 	}
 	var report *reporter
 	if rc.to != "" {
@@ -96,7 +100,11 @@ func serveCommand(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	done := make(chan struct{})
 	var hubServer *http.Server
 	if *hubAddr != "" {
-		hubServer = &http.Server{Handler: hub.Handler(s, time.Now, log.New(stderr, "", 0)), ReadHeaderTimeout: 5 * time.Second,
+		var pings hub.PingFunc
+		if *acceptPings {
+			pings = hubPings(ctx, s, stderr)
+		}
+		hubServer = &http.Server{Handler: hub.Handler(s, time.Now, log.New(stderr, "", 0), pings), ReadHeaderTimeout: 5 * time.Second,
 			ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second}
 		// A bad certificate is a mistake to fix now; an address that is not
 		// up yet, such as a VPN's at boot, is waited for.
@@ -107,7 +115,7 @@ func serveCommand(ctx context.Context, args []string, stdout, stderr io.Writer) 
 			}
 			hubServer.TLSConfig = &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
 		}
-		go serveHub(ctx, done, hubServer, *hubAddr, stdout, stderr)
+		go serveHub(ctx, done, hubServer, *hubAddr, *acceptPings, stdout, stderr)
 	}
 	go maintenanceLoop(ctx, done, s, *syncTab, report, stderr)
 	go func() {
@@ -140,7 +148,7 @@ var hubRetryEvery = 10 * time.Second
 // serveHub accepts reports on addr until done, retrying until it can listen
 // there, so the rest of serve runs while, for example, a VPN address that
 // --hub-addr names is still coming up at boot.
-func serveHub(ctx context.Context, done <-chan struct{}, server *http.Server, addr string, stdout, stderr io.Writer) {
+func serveHub(ctx context.Context, done <-chan struct{}, server *http.Server, addr string, pings bool, stdout, stderr io.Writer) {
 	failed := ""
 	for {
 		listener, err := net.Listen("tcp", addr)
@@ -151,6 +159,9 @@ func serveHub(ctx context.Context, done <-chan struct{}, server *http.Server, ad
 				listener = tls.NewListener(listener, server.TLSConfig)
 			}
 			fmt.Fprintf(stdout, "CronWatch hub: accepting reports at %s://%s%s\n", scheme, listener.Addr(), hub.ReportPath)
+			if pings {
+				fmt.Fprintf(stdout, "CronWatch hub: accepting pings at %s://%s%sSLUG\n", scheme, listener.Addr(), hub.PingPath)
+			}
 			if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				fmt.Fprintln(stderr, "hub:", err)
 			}

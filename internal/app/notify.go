@@ -238,12 +238,10 @@ func (b *tailBuffer) String() string {
 	return text
 }
 
-// notifyRun queues the job's hook if run changed the job between ok and
-// failing, then delivers the job's due alerts, including retries of earlier
-// ones. Runs that were cancelled or skipped, and runs of paused or archived
-// jobs, raise no alert.
-func notifyRun(ctx context.Context, s *storage.Store, job model.Job, run model.Run, stderr io.Writer) {
-	defer deliverAlerts(ctx, s, job.ID, stderr)
+// queueRunAlert queues the job's hook if run changed the job between ok and
+// failing. Runs that were cancelled or skipped, and runs of paused or
+// archived jobs, raise no alert.
+func queueRunAlert(ctx context.Context, s *storage.Store, job model.Job, run model.Run, stderr io.Writer) {
 	failing := model.Failing(run.Status)
 	if (!failing && run.Status != "success") || (job.OnFailure == "" && job.OnRecover == "") || !job.Monitored(time.Now()) {
 		return
