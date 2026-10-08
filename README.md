@@ -28,7 +28,8 @@ the dashboard as the same user, or point them at the same data directory.
   `cronwatch envdiff` shows what cron's `PATH`, shell, or directory lacks, and
   `cronwatch try` reruns the job the way cron ran it.
 - **Missed-run detection.** A five-field cron schedule and grace period show
-  when a job did not start on time.
+  when a job did not start on time; `--every 1h` does the same for a job with
+  no fixed schedule that should run at least once an hour.
 - **Failures your exit codes miss.** Mark runs failed when output matches a
   pattern or a run takes too long, and keep overlapping runs from piling up.
 - **Alerts without new dependencies.** Send ntfy, Slack, Discord, Telegram or
@@ -254,6 +255,7 @@ Backup written to /backups/db.sql.gz
 | `--name NAME` | Job name shown on the dashboard. Required. |
 | `--slug SLUG` | Stable ID for the job. Defaults to the name in lowercase with dashes (`database-backup`). |
 | `--schedule "EXPR"` | Five-field cron expression CronWatch should expect the job on, or `@hourly`, `@daily`, `@weekly`, `@monthly` or `@yearly`. Prefix it with `CRON_TZ=Area/City ` to read it in another time zone than the server's. |
+| `--every DURATION` | Expect the job at least once every period, such as `1h`, counted from its last start, instead of on a cron schedule. See [Jobs without a fixed schedule](#jobs-without-a-fixed-schedule). |
 | `--grace DURATION` | How late a run may start before it counts as missed, e.g. `10m`. Default `5m`. |
 | `--max-log-bytes N` | Output kept per stream. Default 1 MiB, maximum 64 MiB. |
 | `--no-echo` | Record output without also printing it. |
@@ -787,7 +789,7 @@ it, and `prune --older-than` deletes old copies but always keeps the newest.
 ### `cronwatch ping`
 
 ```sh
-cronwatch ping [--start | --fail] [--message TEXT] [--exit-code N] [--max-duration DURATION] [--tag TAG] JOB-SLUG
+cronwatch ping [--start | --fail] [--message TEXT] [--exit-code N] [--max-duration DURATION] [--every DURATION] [--tag TAG] JOB-SLUG
 ```
 
 Records a run of a job that cannot be wrapped with `cronwatch run`, such as a
@@ -1116,7 +1118,7 @@ curl -fsS -H "Authorization: Bearer $TOKEN" --data-binary @etl.log "$HUB/nightly
 | `POST /api/v1/ping/SLUG/CODE` | A run that exited with `CODE`, 0 to 255: failed unless it is 0 |
 
 The body, up to 1 MiB, is recorded as the run's output, as `--message` is.
-The query takes `name`, `schedule`, `grace`, `max_duration` and `tag`
+The query takes `name`, `schedule`, `every`, `grace`, `max_duration` and `tag`
 (repeat it for more), which set the job like `ping`'s flags. Use `-X POST` when there is no body. The hub answers
 204 when the ping is recorded, 400 with the reason when it is not, and 401
 for an unknown token.
@@ -1185,6 +1187,30 @@ as `0 0 30 2 *`) is rejected by `run`, and shows as `invalid_schedule`.
 If a `cronwatch run` process is killed before it can record a result, the run
 is marked `failed` with a note in its log once CronWatch sees the process is
 gone.
+
+### Jobs without a fixed schedule
+
+Some jobs run whenever something else decides: a loop, a queue worker's
+check-in, a backup a NAS starts after it wakes, a CI job. For these, expect a
+run at least once every period instead of at fixed times:
+
+```sh
+cronwatch run --name "Queue drain" --every 15m --grace 5m -- ./drain.sh
+cronwatch ping --every 24h --grace 2h nas-backup
+```
+
+The period counts from the start of the job's last run, or from when
+`--every` was set if it has not run since. Once a period and the grace pass
+with no run starting, the job is **missed**, with the same alerts, `check`
+result, timeline marks and digest entry as a missed cron run, and each further
+silent period is recorded as another. The next run clears it and starts the
+count again; a run still going when the period ends does not count as a new
+start. The period is at least `1m`.
+
+A job has either `--every` or `--schedule`: setting one replaces the other,
+and passing both is an error. It is stored and shown as `@every 1h`, which
+`--schedule "@every 1h"` also accepts. Like `--schedule`, `--every` changes the
+job only when you pass it; `--schedule ""` removes either.
 
 ## Development
 

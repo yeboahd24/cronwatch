@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/yeboahd24/cronwatch/internal/model"
-	"github.com/yeboahd24/cronwatch/internal/schedule"
 )
 
 // timelineRanges are the windows the Timeline page offers, newest at the right.
@@ -125,7 +124,7 @@ func (s *Server) handleTimeline(w http.ResponseWriter, r *http.Request) {
 	for _, job := range jobs {
 		lane := timelineLane{Job: job}
 		if job.Schedule != nil {
-			if sched, err := schedule.Parse(*job.Schedule); err == nil {
+			if sched, err := s.Store.JobSchedule(r.Context(), job.Job); err == nil && sched != nil {
 				var expected []string
 				for t := sched.Next(from.In(time.Local)); !t.IsZero() && t.Before(to); t = sched.Next(t) {
 					if len(expected) == maxExpectedTicks {

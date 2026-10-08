@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"time"
 
+	"github.com/robfig/cron/v3"
+
 	"github.com/yeboahd24/cronwatch/internal/db"
 	"github.com/yeboahd24/cronwatch/internal/model"
 	"github.com/yeboahd24/cronwatch/internal/schedule"
@@ -57,17 +59,17 @@ func (s *Store) detectMissedForJob(ctx context.Context, j model.Job, now time.Ti
 	if j.Schedule == nil || !j.Monitored(now) {
 		return nil, nil
 	}
-	sched, err := schedule.Parse(*j.Schedule)
+	var lastStart *time.Time
+	if _, every, _ := schedule.ParseEvery(*j.Schedule); every {
+		var err error
+		if lastStart, err = s.lastStart(ctx, j.ID); err != nil {
+			return nil, err
+		}
+	}
+	from := scheduleAnchor(j, lastStart)
+	sched, err := schedule.ForJob(*j.Schedule, from)
 	if err != nil {
 		return nil, nil // reported as invalid_schedule by JobView
-	}
-	from := j.CreatedAt
-	if j.MissedCheckedUntil != nil && j.MissedCheckedUntil.After(from) {
-		from = *j.MissedCheckedUntil
-	}
-	// Occurrences during a pause that has run out were not expected.
-	if j.PausedUntil != nil && j.PausedUntil.After(from) {
-		from = *j.PausedUntil
 	}
 	deadline := now.Add(-time.Duration(j.GraceSeconds) * time.Second)
 	occurrence := sched.Next(from.In(time.Local))
@@ -125,4 +127,48 @@ func (s *Store) detectMissedForJob(ctx context.Context, j model.Job, now time.Ti
 		return nil, err
 	}
 	return recorded, tx.Commit()
+}
+
+// scheduleAnchor is when a job's expected runs are counted from: when it
+// was created, when missed runs were last checked, when a pause ran out, or,
+// for an "@every" job, when its last run started, whichever is latest. A cron
+// job's occurrences only start there; an "@every" job's are every period
+// after it.
+func scheduleAnchor(j model.Job, lastStart *time.Time) time.Time {
+	from := j.CreatedAt
+	for _, t := range []*time.Time{j.MissedCheckedUntil, j.PausedUntil, lastStart} {
+		if t != nil && t.After(from) {
+			from = *t
+		}
+	}
+	return from
+}
+
+// lastStart returns when the job's latest run started, nil if it has none.
+func (s *Store) lastStart(ctx context.Context, jobID string) (*time.Time, error) {
+	runs, err := s.RunSummariesForJob(ctx, jobID, 1)
+	if err != nil || len(runs) == 0 {
+		return nil, err
+	}
+	return &runs[0].StartedAt, nil
+}
+
+// JobSchedule returns the schedule the job is expected on, nil if it has
+// none or its expression is invalid.
+func (s *Store) JobSchedule(ctx context.Context, j model.Job) (cron.Schedule, error) {
+	if j.Schedule == nil {
+		return nil, nil
+	}
+	var lastStart *time.Time
+	if _, every, _ := schedule.ParseEvery(*j.Schedule); every {
+		var err error
+		if lastStart, err = s.lastStart(ctx, j.ID); err != nil {
+			return nil, err
+		}
+	}
+	sched, err := schedule.ForJob(*j.Schedule, scheduleAnchor(j, lastStart))
+	if err != nil {
+		return nil, nil
+	}
+	return sched, nil
 }

@@ -30,6 +30,7 @@ type Ping struct {
 
 	Name        *string
 	Schedule    *string
+	Every       *time.Duration
 	Grace       *time.Duration
 	MaxDuration *time.Duration
 	Tags        []string // nil if not given
@@ -72,18 +73,21 @@ func parsePing(r *http.Request) (Ping, error) {
 			p.Schedule = &v
 		case "tag":
 			p.Tags = append([]string{}, values...)
-		case "grace", "max_duration":
+		case "every", "grace", "max_duration":
 			d, err := time.ParseDuration(v)
 			if err != nil {
 				return p, fmt.Errorf("%s=%q is not a duration such as 10m", key, v)
 			}
-			if key == "grace" {
+			switch key {
+			case "every":
+				p.Every = &d
+			case "grace":
 				p.Grace = &d
-			} else {
+			default:
 				p.MaxDuration = &d
 			}
 		default:
-			return p, fmt.Errorf("unknown parameter %q: use name, schedule, grace, max_duration or tag", key)
+			return p, fmt.Errorf("unknown parameter %q: use name, schedule, every, grace, max_duration or tag", key)
 		}
 	}
 	return p, nil

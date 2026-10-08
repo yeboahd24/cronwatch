@@ -30,6 +30,7 @@ func pingCommand(ctx context.Context, args []string, stdout, stderr io.Writer) e
 	message := fs.String("message", "", "text to record as the run's output (stderr with --fail)")
 	name := fs.String("name", "", "job `name` for a new job (default: the slug)")
 	expr := fs.String("schedule", "", "five-field cron `expression` CronWatch should expect the job on")
+	every := fs.Duration("every", 0, "expect a ping at least once every `duration`, such as 1h, instead of on a cron schedule")
 	grace := fs.Duration("grace", storage.DefaultGrace, "how late a run may start before it counts as missed")
 	var tags stringList
 	fs.Var(&tags, "tag", "`tag` to group the job by; repeat or separate with commas for more, and pass \"\" to remove them")
@@ -47,6 +48,8 @@ func pingCommand(ctx context.Context, args []string, stdout, stderr io.Writer) e
 			p.Name = name
 		case "schedule":
 			p.Schedule = expr
+		case "every":
+			p.Every = every
 		case "grace":
 			p.Grace = grace
 		case "max-duration":
@@ -86,6 +89,7 @@ type pingRequest struct {
 
 	Name        *string
 	Schedule    *string
+	Every       *time.Duration // sets the schedule to "@every"; not with Schedule
 	Grace       *time.Duration
 	MaxDuration *time.Duration
 	Tags        []string // nil leaves them; empty removes them
@@ -107,6 +111,14 @@ func (p pingRequest) check() error {
 			return err
 		}
 	}
+	if p.Every != nil {
+		if p.Schedule != nil {
+			return errors.New("--every and --schedule cannot go together: a job is expected either every period or on a cron schedule")
+		}
+		if err := schedule.Validate(schedule.Every(*p.Every), time.Now()); err != nil {
+			return fmt.Errorf("--every: %w", err)
+		}
+	}
 	if p.Grace != nil && *p.Grace < 0 {
 		return errors.New("--grace must not be negative")
 	}
@@ -126,6 +138,10 @@ func recordPing(ctx context.Context, runs lifecycle, p pingRequest) (model.Job, 
 	s := runs.s
 	// An existing job keeps its name and command unless a name is given.
 	spec := storage.JobSpec{Slug: p.Slug, Name: p.Slug, Schedule: p.Schedule, Grace: p.Grace, MaxDuration: p.MaxDuration}
+	if p.Every != nil {
+		expr := schedule.Every(*p.Every)
+		spec.Schedule = &expr
+	}
 	if existing, err := s.GetJobBySlug(ctx, p.Slug); err == nil {
 		spec.Name, spec.Command = existing.Name, existing.Command
 	} else if !errors.Is(err, sql.ErrNoRows) {
@@ -211,7 +227,7 @@ func recordPing(ctx context.Context, runs lifecycle, p pingRequest) (model.Job, 
 func hubPings(ctx context.Context, s *storage.Store, stderr io.Writer) hub.PingFunc {
 	return func(reqCtx context.Context, hp hub.Ping) error {
 		p := pingRequest{Slug: hp.Slug, Start: hp.Start, Fail: hp.Fail, ExitCode: hp.ExitCode, Message: hp.Message,
-			Name: hp.Name, Schedule: hp.Schedule, Grace: hp.Grace, MaxDuration: hp.MaxDuration, Tags: hp.Tags}
+			Name: hp.Name, Schedule: hp.Schedule, Every: hp.Every, Grace: hp.Grace, MaxDuration: hp.MaxDuration, Tags: hp.Tags}
 		if err := p.check(); err != nil {
 			return fmt.Errorf("%w: %v", hub.ErrBadPing, err)
 		}

@@ -404,7 +404,11 @@ func (s *Store) JobView(ctx context.Context, j model.Job, now time.Time) (model.
 		return v, nil
 	}
 	// A bad stored schedule is reported on this job instead of failing every view.
-	sched, err := schedule.Parse(*j.Schedule)
+	var lastStart *time.Time
+	if v.LastRun != nil {
+		lastStart = &v.LastRun.StartedAt
+	}
+	sched, err := schedule.ForJob(*j.Schedule, scheduleAnchor(j, lastStart))
 	if err != nil {
 		v.Status = "invalid_schedule"
 		return v, nil
