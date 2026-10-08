@@ -471,6 +471,13 @@ tr.is-stale td:first-child { opacity: 1; }
 .failure-history a:hover { color: var(--success); }
 .badge { display: inline-block; padding: 1px 8px; border: 1px solid var(--border); border-radius: 999px; color: var(--text); font-size: 12px; font-weight: 600; }
 .badge-new { border-color: var(--danger); color: var(--danger); }
+.tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.tag { display: inline-block; padding: 0 7px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); font-size: 12px; font-weight: 500; text-decoration: none; }
+.cell-job .tag { font-weight: 500; font-size: 12px; }
+.tag:hover, .tag[aria-current] { border-color: var(--success); color: var(--text); }
+.tag-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 8px 4px 12px; color: var(--muted); font-size: 13px; }
+.tag-filter > a:not(.tag) { color: var(--muted); }
+.tag-filter > a[aria-current]:not(.tag) { color: var(--text); font-weight: 600; }
 .cell-error code { overflow-wrap: anywhere; color: var(--log-text); }
 
 /* Comparison with the last success */

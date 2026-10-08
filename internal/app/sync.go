@@ -10,6 +10,7 @@ import (
 	"maps"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"time"
 
@@ -154,7 +155,10 @@ func syncCrontab(ctx context.Context, s *storage.Store, text string) (syncResult
 		if *spec.OnRecover != existing.OnRecover {
 			update.OnRecover = spec.OnRecover
 		}
-		if update.Schedule == nil && update.Grace == nil && update.OnFailure == nil && update.OnRecover == nil {
+		if spec.Tags != nil && !slices.Equal(*spec.Tags, existing.Tags) {
+			update.Tags = spec.Tags
+		}
+		if update.Schedule == nil && update.Grace == nil && update.OnFailure == nil && update.OnRecover == nil && update.Tags == nil {
 			continue
 		}
 		if _, err := s.UpsertJob(ctx, update); err != nil {

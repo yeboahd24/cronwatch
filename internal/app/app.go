@@ -116,15 +116,15 @@ func printHelp(w io.Writer) {
 Usage:
   cronwatch run [flags] -- command [args...]
   cronwatch serve [flags]
-  cronwatch jobs [--all]
+  cronwatch jobs [--all] [--tag TAG]
   cronwatch runs [--status S] [--since DURATION] [--limit N] [job]
   cronwatch prune [--keep N] [--older-than DURATION]
   cronwatch sync [--crontab FILE]
   cronwatch envdiff [--last-success] JOB-SLUG | --run RUN-ID
   cronwatch try JOB-SLUG | --run RUN-ID
-  cronwatch digest [--since DURATION] [--quiet]
+  cronwatch digest [--since DURATION] [--quiet] [--tag TAG]
   cronwatch crontab-history [--limit N] [JOB-SLUG]
-  cronwatch check [JOB-SLUG...]
+  cronwatch check [--tag TAG] [JOB-SLUG...]
   cronwatch doctor
   cronwatch hosts list | add NAME | token NAME | remove NAME
   cronwatch report --to URL [--token-file FILE]

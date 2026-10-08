@@ -32,6 +32,7 @@ type Ping struct {
 	Schedule    *string
 	Grace       *time.Duration
 	MaxDuration *time.Duration
+	Tags        []string // nil if not given
 }
 
 // PingFunc records a ping. An error that wraps ErrBadPing is the sender's
@@ -69,6 +70,8 @@ func parsePing(r *http.Request) (Ping, error) {
 			p.Name = &v
 		case "schedule":
 			p.Schedule = &v
+		case "tag":
+			p.Tags = append([]string{}, values...)
 		case "grace", "max_duration":
 			d, err := time.ParseDuration(v)
 			if err != nil {
@@ -80,7 +83,7 @@ func parsePing(r *http.Request) (Ping, error) {
 				p.MaxDuration = &d
 			}
 		default:
-			return p, fmt.Errorf("unknown parameter %q: use name, schedule, grace or max_duration", key)
+			return p, fmt.Errorf("unknown parameter %q: use name, schedule, grace, max_duration or tag", key)
 		}
 	}
 	return p, nil

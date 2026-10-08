@@ -41,11 +41,17 @@ func jobsCommand(ctx context.Context, args []string, stdout io.Writer) error {
 	dir := fs.String("data-dir", "", "data directory")
 	all := fs.Bool("all", false, "include archived jobs")
 	asJSON := fs.Bool("json", false, "print a JSON array instead of a table")
+	var tagFlags stringList
+	fs.Var(&tagFlags, "tag", "only jobs with this `tag`; repeat for jobs with all of them")
 	if err := parseFlags(fs, args, stdout); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
 		return errors.New("jobs takes no arguments")
+	}
+	tags, err := model.Tags(tagFlags)
+	if err != nil {
+		return fmt.Errorf("--%w", err)
 	}
 	s, err := openForList(ctx, *dir)
 	if err != nil {
@@ -59,6 +65,7 @@ func jobsCommand(ctx context.Context, args []string, stdout io.Writer) error {
 	if !*all {
 		views = model.Unarchived(views)
 	}
+	views = model.WithTags(views, tags)
 	if *asJSON {
 		out := make([]jsonJob, 0, len(views))
 		for _, v := range views {
@@ -66,8 +73,15 @@ func jobsCommand(ctx context.Context, args []string, stdout io.Writer) error {
 		}
 		return writeJSON(stdout, out)
 	}
+	// A TAGS column only once some job has tags, so the table stays as it
+	// was for those who use none.
+	showTags := slices.ContainsFunc(views, func(v model.JobView) bool { return len(v.Tags) > 0 })
 	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tSTATUS\tLAST RUN\tDURATION")
+	header := "NAME\tSTATUS\tLAST RUN\tDURATION"
+	if showTags {
+		header += "\tTAGS"
+	}
+	fmt.Fprintln(w, header)
 	for _, v := range views {
 		last, duration := "—", "—"
 		if v.LastRun != nil {
@@ -80,7 +94,11 @@ func jobsCommand(ctx context.Context, args []string, stdout io.Writer) error {
 		if status == "paused" && v.PausedUntil != nil {
 			status += " until " + v.PausedUntil.Local().Format("2006-01-02 15:04")
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", v.Name, status, last, duration)
+		line := fmt.Sprintf("%s\t%s\t%s\t%s", v.Name, status, last, duration)
+		if showTags {
+			line += "\t" + strings.Join(v.Tags, ",")
+		}
+		fmt.Fprintln(w, line)
 	}
 	return w.Flush()
 }

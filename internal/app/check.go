@@ -28,12 +28,19 @@ func checkCommand(ctx context.Context, args []string, stdout io.Writer) error {
 		"Print one status line for monitoring systems and exit like a Nagios plugin: 0 OK, 1 WARNING\n"+
 			"(a last run was unusually slow, or a job is getting slower), 2 CRITICAL (a job failed, timed\n"+
 			"out, missed a run or has an impossible schedule), 3 UNKNOWN. Checks every job unless given slugs.\n"+
-			"Paused and archived jobs are OK; archived jobs are left out unless named.")
+			"Paused and archived jobs are OK; archived jobs are left out unless named. --tag checks only\n"+
+			"jobs with the tag.")
 	dir := fs.String("data-dir", "", "data directory")
+	var tagFlags stringList
+	fs.Var(&tagFlags, "tag", "only jobs with this `tag`; repeat for jobs with all of them")
 	if err := parseFlags(fs, args, stdout); err != nil {
 		return err
 	}
-	code, lines, err := runCheck(ctx, *dir, fs.Args())
+	tags, err := model.Tags(tagFlags)
+	if err != nil {
+		return fmt.Errorf("--%w", err)
+	}
+	code, lines, err := runCheck(ctx, *dir, fs.Args(), tags)
 	if err != nil {
 		code, lines = checkUnknown, []string{"CRONWATCH UNKNOWN - " + err.Error()}
 	}
@@ -46,7 +53,7 @@ func checkCommand(ctx context.Context, args []string, stdout io.Writer) error {
 
 // runCheck returns the exit code and the output lines: a summary with
 // performance data, then one line per job that is not OK.
-func runCheck(ctx context.Context, dir string, slugs []string) (int, []string, error) {
+func runCheck(ctx context.Context, dir string, slugs, tags []string) (int, []string, error) {
 	s, err := openForList(ctx, dir)
 	if err != nil {
 		return 0, nil, err
@@ -73,6 +80,7 @@ func runCheck(ctx context.Context, dir string, slugs []string) (int, []string, e
 			views = append(views, v)
 		}
 	}
+	views = model.WithTags(views, tags)
 	code := checkOK
 	var counts [3]int
 	var problems, details []string

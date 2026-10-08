@@ -26,7 +26,7 @@ func (q *Queries) ArchiveJob(ctx context.Context, arg ArchiveJobParams) error {
 }
 
 const getJob = `-- name: GetJob :one
-SELECT id, slug, name, command, schedule, grace_seconds, created_at, updated_at, missed_checked_until, on_failure, on_recover, max_duration_seconds, in_crontab, paused_at, paused_until, archived_at FROM jobs WHERE id = ?
+SELECT id, slug, name, command, schedule, grace_seconds, created_at, updated_at, missed_checked_until, on_failure, on_recover, max_duration_seconds, in_crontab, paused_at, paused_until, archived_at, tags FROM jobs WHERE id = ?
 `
 
 func (q *Queries) GetJob(ctx context.Context, id string) (Job, error) {
@@ -49,12 +49,13 @@ func (q *Queries) GetJob(ctx context.Context, id string) (Job, error) {
 		&i.PausedAt,
 		&i.PausedUntil,
 		&i.ArchivedAt,
+		&i.Tags,
 	)
 	return i, err
 }
 
 const getJobBySlug = `-- name: GetJobBySlug :one
-SELECT id, slug, name, command, schedule, grace_seconds, created_at, updated_at, missed_checked_until, on_failure, on_recover, max_duration_seconds, in_crontab, paused_at, paused_until, archived_at FROM jobs WHERE slug = ?
+SELECT id, slug, name, command, schedule, grace_seconds, created_at, updated_at, missed_checked_until, on_failure, on_recover, max_duration_seconds, in_crontab, paused_at, paused_until, archived_at, tags FROM jobs WHERE slug = ?
 `
 
 func (q *Queries) GetJobBySlug(ctx context.Context, slug string) (Job, error) {
@@ -77,12 +78,13 @@ func (q *Queries) GetJobBySlug(ctx context.Context, slug string) (Job, error) {
 		&i.PausedAt,
 		&i.PausedUntil,
 		&i.ArchivedAt,
+		&i.Tags,
 	)
 	return i, err
 }
 
 const listJobs = `-- name: ListJobs :many
-SELECT id, slug, name, command, schedule, grace_seconds, created_at, updated_at, missed_checked_until, on_failure, on_recover, max_duration_seconds, in_crontab, paused_at, paused_until, archived_at FROM jobs ORDER BY name COLLATE NOCASE
+SELECT id, slug, name, command, schedule, grace_seconds, created_at, updated_at, missed_checked_until, on_failure, on_recover, max_duration_seconds, in_crontab, paused_at, paused_until, archived_at, tags FROM jobs ORDER BY name COLLATE NOCASE
 `
 
 func (q *Queries) ListJobs(ctx context.Context) ([]Job, error) {
@@ -111,6 +113,7 @@ func (q *Queries) ListJobs(ctx context.Context) ([]Job, error) {
 			&i.PausedAt,
 			&i.PausedUntil,
 			&i.ArchivedAt,
+			&i.Tags,
 		); err != nil {
 			return nil, err
 		}
@@ -126,7 +129,7 @@ func (q *Queries) ListJobs(ctx context.Context) ([]Job, error) {
 }
 
 const listJobsInCrontab = `-- name: ListJobsInCrontab :many
-SELECT id, slug, name, command, schedule, grace_seconds, created_at, updated_at, missed_checked_until, on_failure, on_recover, max_duration_seconds, in_crontab, paused_at, paused_until, archived_at FROM jobs WHERE in_crontab = 1 ORDER BY slug
+SELECT id, slug, name, command, schedule, grace_seconds, created_at, updated_at, missed_checked_until, on_failure, on_recover, max_duration_seconds, in_crontab, paused_at, paused_until, archived_at, tags FROM jobs WHERE in_crontab = 1 ORDER BY slug
 `
 
 func (q *Queries) ListJobsInCrontab(ctx context.Context) ([]Job, error) {
@@ -155,6 +158,7 @@ func (q *Queries) ListJobsInCrontab(ctx context.Context) ([]Job, error) {
 			&i.PausedAt,
 			&i.PausedUntil,
 			&i.ArchivedAt,
+			&i.Tags,
 		); err != nil {
 			return nil, err
 		}
@@ -250,8 +254,8 @@ func (q *Queries) SetMissedCheckedUntil(ctx context.Context, arg SetMissedChecke
 }
 
 const upsertJob = `-- name: UpsertJob :exec
-INSERT INTO jobs (id, slug, name, command, schedule, grace_seconds, on_failure, on_recover, max_duration_seconds, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO jobs (id, slug, name, command, schedule, grace_seconds, on_failure, on_recover, max_duration_seconds, tags, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(slug) DO UPDATE SET
     name = excluded.name,
     command = excluded.command,
@@ -260,6 +264,7 @@ ON CONFLICT(slug) DO UPDATE SET
     on_failure = excluded.on_failure,
     on_recover = excluded.on_recover,
     max_duration_seconds = excluded.max_duration_seconds,
+    tags = excluded.tags,
     updated_at = excluded.updated_at,
     -- A new schedule must not be judged against occurrences before it existed.
     missed_checked_until = CASE WHEN jobs.schedule IS excluded.schedule
@@ -276,6 +281,7 @@ type UpsertJobParams struct {
 	OnFailure          sql.NullString
 	OnRecover          sql.NullString
 	MaxDurationSeconds sql.NullInt64
+	Tags               string
 	CreatedAt          string
 	UpdatedAt          string
 }
@@ -291,6 +297,7 @@ func (q *Queries) UpsertJob(ctx context.Context, arg UpsertJobParams) error {
 		arg.OnFailure,
 		arg.OnRecover,
 		arg.MaxDurationSeconds,
+		arg.Tags,
 		arg.CreatedAt,
 		arg.UpdatedAt,
 	)

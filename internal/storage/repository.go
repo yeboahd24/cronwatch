@@ -36,6 +36,7 @@ func convertJob(row db.Job) (model.Job, error) {
 	if row.Schedule.Valid {
 		j.Schedule = &row.Schedule.String
 	}
+	j.Tags = strings.Fields(row.Tags)
 	var err error
 	j.CreatedAt, err = parseTime(row.CreatedAt)
 	if err != nil {
@@ -108,6 +109,7 @@ type JobSpec struct {
 	Grace                *time.Duration
 	OnFailure, OnRecover *string
 	MaxDuration          *time.Duration // 0 removes the limit
+	Tags                 *[]string      // as model.Tags returns them; empty removes them all
 }
 
 func (s *Store) UpsertJob(ctx context.Context, spec JobSpec) (model.Job, error) {
@@ -118,7 +120,8 @@ func (s *Store) UpsertJob(ctx context.Context, spec JobSpec) (model.Job, error) 
 	expression, grace := "", DefaultGrace
 	var onFailure, onRecover string
 	var maxDuration int64
-	if spec.Schedule == nil || spec.Grace == nil || spec.OnFailure == nil || spec.OnRecover == nil || spec.MaxDuration == nil {
+	var tags []string
+	if spec.Schedule == nil || spec.Grace == nil || spec.OnFailure == nil || spec.OnRecover == nil || spec.MaxDuration == nil || spec.Tags == nil {
 		existing, err := s.GetJobBySlug(ctx, spec.Slug)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return model.Job{}, err
@@ -130,7 +133,11 @@ func (s *Store) UpsertJob(ctx context.Context, spec JobSpec) (model.Job, error) 
 			grace = time.Duration(existing.GraceSeconds) * time.Second
 			onFailure, onRecover = existing.OnFailure, existing.OnRecover
 			maxDuration = existing.MaxDurationSeconds
+			tags = existing.Tags
 		}
+	}
+	if spec.Tags != nil {
+		tags = *spec.Tags
 	}
 	if spec.MaxDuration != nil {
 		maxDuration = int64(*spec.MaxDuration / time.Second)
@@ -151,7 +158,7 @@ func (s *Store) UpsertJob(ctx context.Context, spec JobSpec) (model.Job, error) 
 	err = db.New(s.DB).UpsertJob(ctx, db.UpsertJobParams{ID: id, Slug: spec.Slug, Name: spec.Name, Command: spec.Command,
 		Schedule: sql.NullString{String: expression, Valid: expression != ""}, GraceSeconds: int64(grace / time.Second),
 		OnFailure: sql.NullString{String: onFailure, Valid: onFailure != ""}, OnRecover: sql.NullString{String: onRecover, Valid: onRecover != ""},
-		MaxDurationSeconds: sql.NullInt64{Int64: maxDuration, Valid: maxDuration > 0}, CreatedAt: now, UpdatedAt: now})
+		MaxDurationSeconds: sql.NullInt64{Int64: maxDuration, Valid: maxDuration > 0}, Tags: strings.Join(tags, " "), CreatedAt: now, UpdatedAt: now})
 	if err != nil {
 		return model.Job{}, err
 	}
